@@ -34,6 +34,10 @@ export class AnalysisResultDto {
   @IsString()
   @IsOptional()
   reasoning?: string;
+
+  @IsString()
+  @IsOptional()
+  detectedLanguage?: string;
 }
 
 export class AiAssistanceResultDto {

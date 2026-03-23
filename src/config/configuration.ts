@@ -20,6 +20,10 @@ export default () => ({
     model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
   },
 
+  ai: {
+    cacheTtlMs: parseInt(process.env.AI_CACHE_TTL_MS ?? '300000', 10),
+  },
+
   ws: {
     corsOrigin: process.env.WS_CORS_ORIGIN || 'http://localhost:5173',
   },

@@ -10,6 +10,14 @@ import { User } from '../../users/schemas/user.schema.js';
 
 export type ConversationDocument = HydratedDocument<Conversation>;
 
+// ── Embedded sub-schema for handoff history ──
+export class HandoffEntry {
+  from: Types.ObjectId;
+  to: Types.ObjectId;
+  reason: string;
+  at: Date;
+}
+
 @Schema({ timestamps: true })
 export class Conversation {
   @Prop({ type: Types.ObjectId, ref: User.name, required: true, index: true })
@@ -48,6 +56,24 @@ export class Conversation {
 
   @Prop()
   resolvedAt?: Date;
+
+  // ── Phase 2 additions ──
+
+  @Prop({ default: 'en' })
+  language: string;
+
+  @Prop({
+    type: [
+      {
+        from: { type: Types.ObjectId, ref: User.name },
+        to: { type: Types.ObjectId, ref: User.name },
+        reason: String,
+        at: Date,
+      },
+    ],
+    default: [],
+  })
+  handoffHistory: HandoffEntry[];
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);

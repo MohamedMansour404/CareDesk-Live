@@ -17,6 +17,7 @@ You must respond with ONLY a valid JSON object (no markdown, no explanation):
   "sentiment": "distress" | "neutral" | "calm",
   "confidence": <number between 0.0 and 1.0>,
   "shouldEscalate": <true or false>,
+  "detectedLanguage": "<ISO 639-1 language code, e.g. en, ar, es, fr, de>",
   "reasoning": "<brief one-line explanation>"
 }
 
@@ -29,7 +30,8 @@ Classification Rules:
 - If you are unsure about the severity, set shouldEscalate=true and confidence lower
 - Distressed or panicked language → sentiment="distress"
 - Neutral, factual → sentiment="neutral"
-- Calm, polite → sentiment="calm"`,
+- Calm, polite → sentiment="calm"
+- Detect the language of the patient's message and return the ISO 639-1 code (e.g., "en" for English, "ar" for Arabic, "es" for Spanish)`,
 
   /**
    * Generates an AI response for the patient (AI support channel).
@@ -43,6 +45,8 @@ Analysis:
 - Priority: {{priority}}
 - Sentiment: {{sentiment}}
 - Should Escalate: {{shouldEscalate}}
+
+CRITICAL: You MUST respond in the same language as the patient's message. If the patient writes in Arabic, respond in Arabic. If in Spanish, respond in Spanish. Always match the patient's language.
 
 Respond to the patient following these rules:
 1. Be empathetic, warm, and professional
@@ -73,6 +77,8 @@ Analyze this conversation and help the agent. Respond with ONLY a valid JSON obj
   "suggestedReply": "<professional, empathetic response draft for the agent to use or modify>",
   "relevantContext": "<any medical context or considerations that may help the agent>"
 }
+
+CRITICAL: The suggestedReply MUST be in the same language as the patient's messages in the conversation history.
 
 Rules for the suggested reply:
 - Be professional and empathetic

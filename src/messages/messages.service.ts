@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Model, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema.js';
 import { CreateMessageDto } from './dto/create-message.dto.js';
@@ -7,9 +8,13 @@ import {
   SenderRole,
   ConversationChannel,
 } from '../common/constants.js';
-import { AiService } from '../ai/ai.service.js';
-import { AnalysisResultDto } from '../ai/dto/ai-result.dto.js';
 import { ConversationsService } from '../conversations/conversations.service.js';
+import { PaginatedResult } from '../common/dto/pagination.dto.js';
+import {
+  SYSTEM_EVENTS,
+  MessageCreatedEvent,
+  AgentRepliedEvent,
+} from '../common/events/index.js';
 
 @Injectable()
 export class MessagesService {
@@ -17,16 +22,15 @@ export class MessagesService {
 
   constructor(
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
-    private aiService: AiService,
     private conversationsService: ConversationsService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   /**
-   * Handles the full message flow:
+   * Patient message flow (async AI):
    * 1. Save patient message
-   * 2. Analyze via AI
-   * 3. If AI channel → generate AI response
-   * 4. If Human channel → update priority and queue (Phase 2)
+   * 2. Return immediately
+   * 3. Emit event → AI processing happens in background
    */
   async createPatientMessage(
     conversationId: string,
@@ -36,7 +40,7 @@ export class MessagesService {
     const conversation =
       await this.conversationsService.findById(conversationId);
 
-    // 1. Save the patient's message
+    // 1. Save the patient's message immediately
     const patientMessage = await this.saveMessage({
       conversation: conversationId,
       sender: senderId,
@@ -44,41 +48,34 @@ export class MessagesService {
       content: dto.content,
     });
 
-    // 2. Analyze the message with AI
-    const analysis = await this.aiService.analyzeMessage(dto.content);
-
-    // Update the message with analysis
-    patientMessage.analysis = analysis;
-    await patientMessage.save();
-
-    // Update conversation priority & category based on analysis
-    await this.conversationsService.updatePriority(
-      conversationId,
-      analysis.priority,
-      analysis.intent,
+    // 2. Emit event for async processing (AI analysis, queue, WebSocket)
+    this.eventEmitter.emit(
+      SYSTEM_EVENTS.MESSAGE_CREATED,
+      new MessageCreatedEvent(
+        conversationId,
+        patientMessage._id.toString(),
+        senderId,
+        SenderRole.PATIENT,
+        dto.content,
+        conversation.channel,
+        patientMessage.toObject(),
+      ),
     );
 
-    // 3. Route based on channel
-    if (conversation.channel === ConversationChannel.AI) {
-      return this.handleAiChannel(conversationId, dto.content, analysis, patientMessage);
-    } else {
-      // HUMAN channel – message is saved and analyzed
-      // Queue integration will be added in Phase 2
-      this.logger.log(
-        `Message queued for human support: conversation=${conversationId}, ` +
-          `priority=${analysis.priority}`,
-      );
-      return {
-        patientMessage,
-        analysis,
-        channel: ConversationChannel.HUMAN,
-        status: 'queued_for_agent',
-      };
-    }
+    this.logger.log(
+      `Patient message saved: conversation=${conversationId}, processing async`,
+    );
+
+    // 3. Return immediately — AI results delivered via WebSocket
+    return {
+      message: patientMessage,
+      status: 'processing',
+      channel: conversation.channel,
+    };
   }
 
   /**
-   * Handles agent reply to a patient message.
+   * Agent reply — save and emit event for auto-evaluation.
    */
   async createAgentMessage(
     conversationId: string,
@@ -92,18 +89,61 @@ export class MessagesService {
       content: dto.content,
     });
 
+    // Emit event — evaluation + WebSocket handled by listeners
+    this.eventEmitter.emit(
+      SYSTEM_EVENTS.MESSAGE_AGENT_REPLIED,
+      new AgentRepliedEvent(
+        conversationId,
+        agentId,
+        agentMessage._id.toString(),
+        dto.content,
+        agentMessage.toObject(),
+      ),
+    );
+
     this.logger.log(
       `Agent ${agentId} replied in conversation ${conversationId}`,
     );
 
-    // Evaluation will be triggered in Phase 2
     return agentMessage;
   }
 
   /**
-   * Get all messages for a conversation.
+   * Get paginated messages for a conversation.
    */
-  async findByConversation(conversationId: string): Promise<MessageDocument[]> {
+  async findByConversation(
+    conversationId: string,
+    page = 1,
+    limit = 50,
+  ): Promise<PaginatedResult<MessageDocument>> {
+    const filter = { conversation: new Types.ObjectId(conversationId) };
+    const total = await this.messageModel.countDocuments(filter);
+
+    const data = await this.messageModel
+      .find(filter)
+      .sort({ createdAt: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('sender', 'name email role')
+      .exec();
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Find messages by conversation (unpaginated, for internal use).
+   */
+  async findAllByConversation(
+    conversationId: string,
+  ): Promise<MessageDocument[]> {
     return this.messageModel
       .find({ conversation: new Types.ObjectId(conversationId) })
       .sort({ createdAt: 1 })
@@ -112,55 +152,44 @@ export class MessagesService {
   }
 
   /**
-   * Get AI assistance for a conversation (summary + suggested reply).
+   * Find last patient message before a given message ID.
    */
-  async getAiAssistance(conversationId: string) {
-    const messages = await this.findByConversation(conversationId);
-
-    const conversationHistory = messages
-      .map((m) => {
-        const role = m.senderRole.toUpperCase();
-        return `[${role}]: ${m.content}`;
+  async findLastPatientMessage(
+    conversationId: string,
+    beforeMessageId: string,
+  ): Promise<MessageDocument | null> {
+    return this.messageModel
+      .findOne({
+        conversation: new Types.ObjectId(conversationId),
+        senderRole: SenderRole.PATIENT,
+        _id: { $lt: new Types.ObjectId(beforeMessageId) },
       })
-      .join('\n');
-
-    return this.aiService.generateAgentAssistance(conversationHistory);
+      .sort({ _id: -1 })
+      .exec();
   }
 
-  // ─────────────────────────────────────────────
-  // PRIVATE HELPERS
-  // ─────────────────────────────────────────────
+  /**
+   * Update a message with AI analysis result.
+   */
+  async updateAnalysis(
+    messageId: string,
+    analysis: Record<string, unknown>,
+  ): Promise<void> {
+    await this.messageModel.findByIdAndUpdate(messageId, { analysis });
+  }
 
-  private async handleAiChannel(
+  /**
+   * Save an AI response message.
+   */
+  async saveAiResponse(
     conversationId: string,
-    patientContent: string,
-    analysis: AnalysisResultDto,
-    patientMessage: MessageDocument,
-  ) {
-    // Generate AI response
-    const aiResponseText = await this.aiService.generateResponse(
-      patientContent,
-      analysis,
-    );
-
-    // Save AI response as a message
-    const aiMessage = await this.saveMessage({
+    content: string,
+  ): Promise<MessageDocument> {
+    return this.saveMessage({
       conversation: conversationId,
       senderRole: SenderRole.AI,
-      content: aiResponseText,
+      content,
     });
-
-    this.logger.log(
-      `AI responded in conversation ${conversationId} ` +
-        `(escalate=${analysis.shouldEscalate})`,
-    );
-
-    return {
-      patientMessage,
-      analysis,
-      aiResponse: aiMessage,
-      channel: ConversationChannel.AI,
-    };
   }
 
   private async saveMessage(data: {

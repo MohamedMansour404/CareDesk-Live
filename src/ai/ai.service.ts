@@ -1,6 +1,7 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import { createHash } from 'crypto';
+import { AiProvider, AI_PROVIDER } from './interfaces/ai-provider.interface.js';
 import { PROMPTS } from './prompts/index.js';
 import {
   AnalysisResultDto,
@@ -14,61 +15,58 @@ import {
   AI_DISCLAIMER,
   ESCALATION_CONFIDENCE_THRESHOLD,
 } from '../common/constants.js';
+import { sanitizeForPrompt } from '../common/utils/sanitize.js';
+
+interface CacheEntry {
+  data: AnalysisResultDto;
+  expiresAt: number;
+}
 
 @Injectable()
-export class AiService implements OnModuleInit {
+export class AiService {
   private readonly logger = new Logger(AiService.name);
-  private model: GenerativeModel | null = null;
-  private genAI: GoogleGenerativeAI | null = null;
+  private readonly analysisCache = new Map<string, CacheEntry>();
+  private readonly cacheTtl: number;
 
-  constructor(private configService: ConfigService) {}
-
-  onModuleInit() {
-    const apiKey = this.configService.get<string>('gemini.apiKey');
-    const modelName = this.configService.get<string>('gemini.model') ?? 'gemini-2.0-flash';
-
-    if (!apiKey) {
-      this.logger.warn(
-        'Gemini API key not configured – AI features will use fallback responses',
-      );
-      return;
-    }
-
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ model: modelName });
-    this.logger.log(`AI Service initialized with model: ${modelName}`);
+  constructor(
+    @Inject(AI_PROVIDER) private readonly provider: AiProvider,
+    private configService: ConfigService,
+  ) {
+    this.cacheTtl = this.configService.get<number>('ai.cacheTtlMs') ?? 300_000;
+    this.logger.log(
+      `AI Service initialized with provider: ${provider.getName()}`,
+    );
   }
 
   // ─────────────────────────────────────────────
-  // 1. MESSAGE ANALYSIS
+  // 1. MESSAGE ANALYSIS (with caching)
   // ─────────────────────────────────────────────
   async analyzeMessage(message: string): Promise<AnalysisResultDto> {
+    // Check cache first
+    const cacheKey = this.hashMessage(message);
+    const cached = this.getFromCache(cacheKey);
+    if (cached) {
+      this.logger.debug('Analysis cache HIT');
+      return cached;
+    }
+
     try {
-      const prompt = PROMPTS.MESSAGE_ANALYSIS.replace('{{message}}', message);
-      const result = await this.callGeminiWithRetry(prompt);
+      const sanitized = sanitizeForPrompt(message);
+      const prompt = PROMPTS.MESSAGE_ANALYSIS.replace('{{message}}', sanitized);
+      const result = await this.callProviderWithRetry(prompt);
       const parsed = this.parseJsonResponse<AnalysisResultDto>(result);
-
-      // Enforce: emergency intent MUST be high priority
-      if (
-        parsed.intent === MessageIntent.EMERGENCY &&
-        parsed.priority !== MessagePriority.HIGH
-      ) {
-        parsed.priority = MessagePriority.HIGH;
-        parsed.shouldEscalate = true;
-      }
-
-      // Enforce: low confidence triggers escalation
-      if (parsed.confidence < ESCALATION_CONFIDENCE_THRESHOLD) {
-        parsed.shouldEscalate = true;
-      }
+      this.validateAnalysisOutput(parsed);
+      const validated = this.enforceAnalysisRules(parsed);
 
       this.logger.debug(
-        `Analysis: intent=${parsed.intent}, priority=${parsed.priority}, ` +
-          `sentiment=${parsed.sentiment}, confidence=${parsed.confidence}, ` +
-          `escalate=${parsed.shouldEscalate}`,
+        `Analysis: intent=${validated.intent}, priority=${validated.priority}, ` +
+          `sentiment=${validated.sentiment}, confidence=${validated.confidence}, ` +
+          `escalate=${validated.shouldEscalate}`,
       );
 
-      return parsed;
+      // Cache the result
+      this.setCache(cacheKey, validated);
+      return validated;
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Message analysis failed: ${errMsg}`);
@@ -90,8 +88,7 @@ export class AiService implements OnModuleInit {
         .replace('{{sentiment}}', analysis.sentiment)
         .replace('{{shouldEscalate}}', String(analysis.shouldEscalate));
 
-      const response = await this.callGeminiWithRetry(prompt);
-      return response;
+      return await this.callProviderWithRetry(prompt);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`AI response generation failed: ${errMsg}`);
@@ -110,7 +107,7 @@ export class AiService implements OnModuleInit {
         '{{conversationHistory}}',
         conversationHistory,
       );
-      const result = await this.callGeminiWithRetry(prompt);
+      const result = await this.callProviderWithRetry(prompt);
       return this.parseJsonResponse<AiAssistanceResultDto>(result);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -137,7 +134,7 @@ export class AiService implements OnModuleInit {
         patientMessage,
       ).replace('{{agentResponse}}', agentResponse);
 
-      const result = await this.callGeminiWithRetry(prompt);
+      const result = await this.callProviderWithRetry(prompt);
       return this.parseJsonResponse<QualityEvaluationDto>(result);
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -156,37 +153,29 @@ export class AiService implements OnModuleInit {
   // ─────────────────────────────────────────────
 
   /**
-   * Calls Gemini API with retry logic (exponential backoff, 3 attempts).
+   * Calls the AI provider with retry logic (exponential backoff, 3 attempts).
    */
-  private async callGeminiWithRetry(
+  private async callProviderWithRetry(
     prompt: string,
     maxRetries = 3,
   ): Promise<string> {
-    if (!this.model) {
-      throw new Error('AI model not initialized – missing API key');
+    if (!this.provider.isAvailable()) {
+      throw new Error(`AI provider ${this.provider.getName()} is not available`);
     }
 
     let lastError: Error = new Error('All retry attempts failed');
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const result = await this.model.generateContent(prompt);
-        const response = result.response;
-        const text = response.text();
-
-        if (!text || text.trim().length === 0) {
-          throw new Error('Empty response from Gemini');
-        }
-
-        return text.trim();
+        return await this.provider.generateContent(prompt);
       } catch (error: unknown) {
         lastError = error instanceof Error ? error : new Error(String(error));
         this.logger.warn(
-          `Gemini API attempt ${attempt}/${maxRetries} failed: ${lastError.message}`,
+          `${this.provider.getName()} attempt ${attempt}/${maxRetries} failed: ${lastError.message}`,
         );
 
         if (attempt < maxRetries) {
-          const delay = Math.pow(2, attempt) * 1000; // 2s, 4s, 8s
+          const delay = Math.pow(2, attempt) * 1000;
           await this.sleep(delay);
         }
       }
@@ -196,10 +185,62 @@ export class AiService implements OnModuleInit {
   }
 
   /**
+   * Enforces safety rules on AI analysis output (code-enforced, not prompt-dependent).
+   */
+  private enforceAnalysisRules(parsed: AnalysisResultDto): AnalysisResultDto {
+    // Rule 1: Emergency intent MUST be high priority
+    if (
+      parsed.intent === MessageIntent.EMERGENCY &&
+      parsed.priority !== MessagePriority.HIGH
+    ) {
+      parsed.priority = MessagePriority.HIGH;
+      parsed.shouldEscalate = true;
+    }
+
+    // Rule 2: Low confidence triggers escalation
+    if (parsed.confidence < ESCALATION_CONFIDENCE_THRESHOLD) {
+      parsed.shouldEscalate = true;
+    }
+
+    return parsed;
+  }
+
+  /**
+   * Validates that the AI's analysis output has valid structure and values.
+   */
+  private validateAnalysisOutput(parsed: AnalysisResultDto): void {
+    const validIntents = Object.values(MessageIntent);
+    const validPriorities = Object.values(MessagePriority);
+    const validSentiments = Object.values(MessageSentiment);
+
+    if (!validIntents.includes(parsed.intent)) {
+      this.logger.warn(`Invalid intent from AI: "${parsed.intent}" – using fallback`);
+      throw new Error(`Invalid AI analysis: unknown intent "${parsed.intent}"`);
+    }
+
+    if (!validPriorities.includes(parsed.priority)) {
+      this.logger.warn(`Invalid priority from AI: "${parsed.priority}" – using fallback`);
+      throw new Error(`Invalid AI analysis: unknown priority "${parsed.priority}"`);
+    }
+
+    if (!validSentiments.includes(parsed.sentiment)) {
+      this.logger.warn(`Invalid sentiment from AI: "${parsed.sentiment}" – using fallback`);
+      throw new Error(`Invalid AI analysis: unknown sentiment "${parsed.sentiment}"`);
+    }
+
+    if (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) {
+      parsed.confidence = 0.5;
+    }
+
+    if (typeof parsed.shouldEscalate !== 'boolean') {
+      parsed.shouldEscalate = true;
+    }
+  }
+
+  /**
    * Parses JSON from LLM response, stripping markdown code fences if present.
    */
   private parseJsonResponse<T>(text: string): T {
-    // Strip markdown code fences (```json ... ```)
     let cleaned = text.trim();
     if (cleaned.startsWith('```')) {
       cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
@@ -213,10 +254,41 @@ export class AiService implements OnModuleInit {
     }
   }
 
-  /**
-   * Returns a safe fallback analysis when the AI service is unavailable.
-   * Defaults to high priority to err on the side of caution.
-   */
+  // ── Cache helpers ──────────────────────────
+
+  private hashMessage(message: string): string {
+    return createHash('sha256')
+      .update(message.toLowerCase().trim())
+      .digest('hex');
+  }
+
+  private getFromCache(key: string): AnalysisResultDto | null {
+    const entry = this.analysisCache.get(key);
+    if (!entry) return null;
+
+    if (Date.now() > entry.expiresAt) {
+      this.analysisCache.delete(key);
+      return null;
+    }
+
+    return entry.data;
+  }
+
+  private setCache(key: string, data: AnalysisResultDto): void {
+    // Evict old entries if cache grows beyond 1000
+    if (this.analysisCache.size > 1000) {
+      const firstKey = this.analysisCache.keys().next().value;
+      if (firstKey) this.analysisCache.delete(firstKey);
+    }
+
+    this.analysisCache.set(key, {
+      data,
+      expiresAt: Date.now() + this.cacheTtl,
+    });
+  }
+
+  // ── Fallbacks ──────────────────────────────
+
   private getFallbackAnalysis(): AnalysisResultDto {
     return {
       intent: MessageIntent.GENERAL,
@@ -224,14 +296,10 @@ export class AiService implements OnModuleInit {
       sentiment: MessageSentiment.NEUTRAL,
       confidence: 0,
       shouldEscalate: true,
-      reasoning:
-        'AI analysis unavailable – defaulting to high priority for safety',
+      reasoning: 'AI analysis unavailable – defaulting to high priority for safety',
     };
   }
 
-  /**
-   * Returns a safe fallback response when AI generation fails.
-   */
   private getFallbackResponse(analysis: AnalysisResultDto): string {
     const isUrgent =
       analysis.priority === MessagePriority.HIGH || analysis.shouldEscalate;

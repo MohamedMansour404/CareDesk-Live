@@ -12,10 +12,13 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
   const port = configService.get<number>('port', 3000);
-  const corsOrigin = configService.get<string>(
-    'ws.corsOrigin',
-    'http://localhost:5173',
-  );
+  const corsOrigins = configService
+    .get<string>('ws.corsOrigin', 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim());
+
+  // ── Graceful Shutdown ───────────────────────
+  app.enableShutdownHooks();
 
   // ── Global Pipes ───────────────────────────
   app.useGlobalPipes(
@@ -36,9 +39,9 @@ async function bootstrap() {
     new TransformInterceptor(),
   );
 
-  // ── CORS ───────────────────────────────────
+  // ── CORS (supports multiple origins) ───────
   app.enableCors({
-    origin: corsOrigin,
+    origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
@@ -46,7 +49,8 @@ async function bootstrap() {
   await app.listen(port);
   logger.log(`🚀 CareDesk AI server running on http://localhost:${port}`);
   logger.log(`📋 Environment: ${configService.get<string>('nodeEnv')}`);
-  logger.log(`🔗 CORS Origin: ${corsOrigin}`);
+  logger.log(`🔗 CORS Origins: ${corsOrigins.join(', ')}`);
+  logger.log(`💚 Health check: http://localhost:${port}/api/health`);
 }
 
 bootstrap();

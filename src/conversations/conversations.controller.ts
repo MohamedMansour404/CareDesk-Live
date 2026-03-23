@@ -5,11 +5,14 @@ import {
   Patch,
   Param,
   Body,
+  Query,
   UseGuards,
   Request,
 } from '@nestjs/common';
 import { ConversationsService } from './conversations.service.js';
 import { CreateConversationDto } from './dto/create-conversation.dto.js';
+import { TransferConversationDto } from './dto/transfer-conversation.dto.js';
+import { PaginationDto } from '../common/dto/pagination.dto.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
@@ -35,11 +38,15 @@ export class ConversationsController {
   }
 
   @Get()
-  async findAll(@Request() req: AuthenticatedRequest) {
+  async findAll(
+    @Request() req: AuthenticatedRequest,
+    @Query() pagination: PaginationDto,
+  ) {
+    const { page, limit } = pagination;
     if (req.user.role === UserRole.PATIENT) {
-      return this.conversationsService.findByPatient(req.user.userId);
+      return this.conversationsService.findByPatient(req.user.userId, page, limit);
     }
-    return this.conversationsService.findPendingByPriority();
+    return this.conversationsService.findPendingByPriority(page, limit);
   }
 
   @Get(':id')
@@ -67,5 +74,16 @@ export class ConversationsController {
       req.user.userId,
       req.user.role,
     );
+  }
+
+  @Patch(':id/transfer')
+  @Roles(UserRole.AGENT)
+  @UseGuards(RolesGuard)
+  async transfer(
+    @Param('id') id: string,
+    @Body() dto: TransferConversationDto,
+    @Request() req: AuthenticatedRequest,
+  ) {
+    return this.conversationsService.transfer(id, req.user.userId, dto);
   }
 }

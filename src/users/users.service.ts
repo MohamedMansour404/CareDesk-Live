@@ -76,10 +76,13 @@ export class UsersService {
   async incrementActiveConversations(
     agentId: string,
     delta: number,
+    session?: import('mongoose').ClientSession,
   ): Promise<void> {
-    await this.userModel.findByIdAndUpdate(agentId, {
-      $inc: { activeConversations: delta },
-    });
+    await this.userModel.findByIdAndUpdate(
+      agentId,
+      { $inc: { activeConversations: delta } },
+      session ? { session } : {},
+    );
   }
 
   async validatePassword(
