@@ -1,24 +1,33 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { useAuthStore } from '../stores/authStore';
-import '../styles/auth.css';
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { useAuthStore } from "../stores/authStore";
+import "../styles/auth.css";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuthStore();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [sessionNotice, setSessionNotice] = useState("");
+
+  useEffect(() => {
+    const notice = sessionStorage.getItem("auth_notice");
+    if (notice) {
+      setSessionNotice(notice);
+      sessionStorage.removeItem("auth_notice");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     try {
       await login(email, password);
-      navigate('/');
+      navigate("/");
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Invalid credentials');
+      setError(err.response?.data?.message || "Invalid credentials");
     }
   };
 
@@ -28,7 +37,7 @@ export default function LoginPage() {
         className="auth-card"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: 'easeOut' }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
       >
         <div className="auth-logo">
           <h1>CareDesk AI</h1>
@@ -36,6 +45,21 @@ export default function LoginPage() {
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
+          {sessionNotice && (
+            <motion.div
+              className="auth-error"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              style={{
+                background: "rgba(59, 130, 246, 0.08)",
+                borderColor: "rgba(59, 130, 246, 0.25)",
+                color: "var(--blue)",
+              }}
+            >
+              {sessionNotice}
+            </motion.div>
+          )}
+
           {error && (
             <motion.div
               className="auth-error"
@@ -70,13 +94,12 @@ export default function LoginPage() {
           </div>
 
           <button type="submit" className="auth-btn" disabled={isLoading}>
-            {isLoading ? 'Signing in…' : 'Sign In'}
+            {isLoading ? "Signing in…" : "Sign In"}
           </button>
         </form>
 
         <div className="auth-toggle">
-          Don't have an account?{' '}
-          <Link to="/register">Create one</Link>
+          Don't have an account? <Link to="/register">Create one</Link>
         </div>
       </motion.div>
     </div>

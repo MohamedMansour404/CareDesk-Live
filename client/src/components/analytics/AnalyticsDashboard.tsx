@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import {
   MessageSquare,
   CheckCircle,
@@ -9,9 +9,9 @@ import {
   Users,
   AlertTriangle,
   BarChart3,
-} from 'lucide-react';
-import api from '../../lib/api';
-import { useAuthStore } from '../../stores/authStore';
+} from "lucide-react";
+import api from "../../lib/api";
+import { useAuthStore } from "../../stores/authStore";
 
 interface OverviewStats {
   totalConversations: number;
@@ -36,34 +36,38 @@ interface AgentStats {
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
-  high: 'var(--red)',
-  medium: 'var(--amber)',
-  low: 'var(--emerald)',
+  high: "var(--red)",
+  medium: "var(--amber)",
+  low: "var(--emerald)",
 };
 
 const INTENT_COLORS: Record<string, string> = {
-  symptom_report: 'var(--blue)',
-  appointment: 'var(--violet)',
-  medication: 'var(--teal)',
-  general: 'var(--text-muted)',
-  emergency: 'var(--red)',
-  follow_up: 'var(--amber)',
+  symptom_report: "var(--blue)",
+  appointment: "var(--violet)",
+  medication: "var(--teal)",
+  general: "var(--text-muted)",
+  emergency: "var(--red)",
+  follow_up: "var(--amber)",
 };
 
 export default function AnalyticsDashboard() {
   const userId = useAuthStore((s) => s.user?._id);
 
-  const { data: overview, isLoading: overviewLoading } = useQuery<OverviewStats>({
-    queryKey: ['analytics-overview'],
+  const {
+    data: overview,
+    isLoading: overviewLoading,
+    isError: overviewError,
+  } = useQuery<OverviewStats>({
+    queryKey: ["analytics-overview"],
     queryFn: async () => {
-      const res = await api.get('/api/dashboard/stats/overview');
+      const res = await api.get("/api/dashboard/stats/overview");
       return res.data;
     },
     refetchInterval: 30_000,
   });
 
   const { data: agentStats } = useQuery<AgentStats>({
-    queryKey: ['analytics-agent', userId],
+    queryKey: ["analytics-agent", userId],
     queryFn: async () => {
       const res = await api.get(`/api/dashboard/stats/agent/${userId}`);
       return res.data;
@@ -75,28 +79,28 @@ export default function AnalyticsDashboard() {
   const statCards = overview
     ? [
         {
-          label: 'Total Conversations',
+          label: "Total Conversations",
           value: overview.totalConversations,
           icon: <MessageSquare size={20} />,
-          color: 'var(--blue)',
+          color: "var(--blue)",
         },
         {
-          label: 'Active Now',
+          label: "Active Now",
           value: overview.activeConversations,
           icon: <Clock size={20} />,
-          color: 'var(--amber)',
+          color: "var(--amber)",
         },
         {
-          label: 'Resolved',
+          label: "Resolved",
           value: overview.resolvedConversations,
           icon: <CheckCircle size={20} />,
-          color: 'var(--emerald)',
+          color: "var(--emerald)",
         },
         {
-          label: 'Resolution Rate',
+          label: "Resolution Rate",
           value: `${overview.resolutionRate}%`,
           icon: <TrendingUp size={20} />,
-          color: 'var(--violet)',
+          color: "var(--violet)",
         },
       ]
     : [];
@@ -124,7 +128,7 @@ export default function AnalyticsDashboard() {
                 className="analytics-bar-segment"
                 style={{
                   width: `${(count / total) * 100}%`,
-                  backgroundColor: colorMap[key] || 'var(--text-muted)',
+                  backgroundColor: colorMap[key] || "var(--text-muted)",
                 }}
                 title={`${key}: ${count} (${Math.round((count / total) * 100)}%)`}
               />
@@ -137,9 +141,13 @@ export default function AnalyticsDashboard() {
               <div key={key} className="analytics-legend-item">
                 <span
                   className="analytics-legend-dot"
-                  style={{ backgroundColor: colorMap[key] || 'var(--text-muted)' }}
+                  style={{
+                    backgroundColor: colorMap[key] || "var(--text-muted)",
+                  }}
                 />
-                <span className="analytics-legend-label">{key.replace('_', ' ')}</span>
+                <span className="analytics-legend-label">
+                  {key.replace("_", " ")}
+                </span>
                 <span className="analytics-legend-count">{count}</span>
               </div>
             ))}
@@ -155,7 +163,49 @@ export default function AnalyticsDashboard() {
           <BarChart3 size={20} />
           <h2>Analytics Dashboard</h2>
         </div>
-        <div className="analytics-loading">Loading analytics...</div>
+        <div className="analytics-stats-grid">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="analytics-stat-card">
+              <div
+                className="skeleton"
+                style={{ width: 20, height: 20, marginBottom: 8 }}
+              />
+              <div
+                className="skeleton"
+                style={{ width: 90, height: 20, marginBottom: 8 }}
+              />
+              <div className="skeleton" style={{ width: 110, height: 12 }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (overviewError) {
+    return (
+      <div className="analytics-panel">
+        <div className="analytics-header">
+          <BarChart3 size={20} />
+          <h2>Analytics Dashboard</h2>
+        </div>
+        <div className="analytics-loading">
+          Unable to load analytics right now.
+        </div>
+      </div>
+    );
+  }
+
+  if (!overview) {
+    return (
+      <div className="analytics-panel">
+        <div className="analytics-header">
+          <BarChart3 size={20} />
+          <h2>Analytics Dashboard</h2>
+        </div>
+        <div className="analytics-loading">
+          No analytics data available yet.
+        </div>
       </div>
     );
   }
@@ -191,22 +241,22 @@ export default function AnalyticsDashboard() {
         {overview?.channelDistribution &&
           renderDistributionBar(
             overview.channelDistribution,
-            { ai: 'var(--violet)', human: 'var(--blue)' },
-            'Channel Distribution',
+            { ai: "var(--violet)", human: "var(--blue)" },
+            "Channel Distribution",
           )}
 
         {overview?.priorityDistribution &&
           renderDistributionBar(
             overview.priorityDistribution,
             PRIORITY_COLORS,
-            'Priority Distribution',
+            "Priority Distribution",
           )}
 
         {overview?.intentDistribution &&
           renderDistributionBar(
             overview.intentDistribution,
             INTENT_COLORS,
-            'Intent Categories',
+            "Intent Categories",
           )}
       </div>
 
@@ -224,19 +274,27 @@ export default function AnalyticsDashboard() {
           </div>
           <div className="analytics-agent-grid">
             <div className="analytics-agent-stat">
-              <div className="analytics-agent-stat-value">{agentStats.totalConversations}</div>
+              <div className="analytics-agent-stat-value">
+                {agentStats.totalConversations}
+              </div>
               <div className="analytics-agent-stat-label">Total Handled</div>
             </div>
             <div className="analytics-agent-stat">
-              <div className="analytics-agent-stat-value">{agentStats.resolvedConversations}</div>
+              <div className="analytics-agent-stat-value">
+                {agentStats.resolvedConversations}
+              </div>
               <div className="analytics-agent-stat-label">Resolved</div>
             </div>
             <div className="analytics-agent-stat">
-              <div className="analytics-agent-stat-value">{agentStats.resolutionRate}%</div>
+              <div className="analytics-agent-stat-value">
+                {agentStats.resolutionRate}%
+              </div>
               <div className="analytics-agent-stat-label">Resolution Rate</div>
             </div>
             <div className="analytics-agent-stat">
-              <div className="analytics-agent-stat-value">{agentStats.avgResponseTimeFormatted}</div>
+              <div className="analytics-agent-stat-value">
+                {agentStats.avgResponseTimeFormatted}
+              </div>
               <div className="analytics-agent-stat-label">Avg Response</div>
             </div>
           </div>
@@ -246,7 +304,9 @@ export default function AnalyticsDashboard() {
               <div className="analytics-eval-track">
                 <div
                   className="analytics-eval-fill"
-                  style={{ width: `${(agentStats.evaluation.averageScore / 10) * 100}%` }}
+                  style={{
+                    width: `${(agentStats.evaluation.averageScore / 10) * 100}%`,
+                  }}
                 />
               </div>
               <span className="analytics-eval-score">

@@ -17,6 +17,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { UserRole } from '../common/constants.js';
+import { ConversationAccessGuard } from './access/conversation-access.guard.js';
+import { ConversationAccess } from './access/conversation-access.decorator.js';
+import { ConversationAccessAction } from './access/conversation-access.types.js';
 
 interface AuthenticatedRequest {
   user: { userId: string; role: UserRole };
@@ -44,12 +47,22 @@ export class ConversationsController {
   ) {
     const { page, limit } = pagination;
     if (req.user.role === UserRole.PATIENT) {
-      return this.conversationsService.findByPatient(req.user.userId, page, limit);
+      return this.conversationsService.findByPatient(
+        req.user.userId,
+        page,
+        limit,
+      );
     }
     return this.conversationsService.findPendingByPriority(page, limit);
   }
 
   @Get(':id')
+  @UseGuards(ConversationAccessGuard)
+  @ConversationAccess({
+    action: ConversationAccessAction.VIEW,
+    paramName: 'id',
+    options: { allowQueueViewForAgents: true },
+  })
   async findOne(@Param('id') id: string) {
     return this.conversationsService.findById(id);
   }
@@ -57,18 +70,19 @@ export class ConversationsController {
   @Patch(':id/assign')
   @Roles(UserRole.AGENT)
   @UseGuards(RolesGuard)
-  async assign(
-    @Param('id') id: string,
-    @Request() req: AuthenticatedRequest,
-  ) {
+  async assign(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.conversationsService.assignAgent(id, req.user.userId);
   }
 
   @Patch(':id/resolve')
-  async resolve(
-    @Param('id') id: string,
-    @Request() req: AuthenticatedRequest,
-  ) {
+  @Roles(UserRole.PATIENT, UserRole.AGENT)
+  @UseGuards(RolesGuard, ConversationAccessGuard)
+  @ConversationAccess({
+    action: ConversationAccessAction.VIEW,
+    paramName: 'id',
+    options: { allowQueueViewForAgents: false },
+  })
+  async resolve(@Param('id') id: string, @Request() req: AuthenticatedRequest) {
     return this.conversationsService.resolve(
       id,
       req.user.userId,

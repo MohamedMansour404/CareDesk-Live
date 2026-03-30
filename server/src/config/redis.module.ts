@@ -3,6 +3,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { buildRedisOptions } from '../common/utils/redis.js';
 import { CacheService } from '../common/services/cache.service.js';
+import { CacheInvalidationService } from '../common/services/cache-invalidation.service.js';
+import { IdempotencyService } from '../common/services/idempotency.service.js';
+import { RedisLifecycleService } from './redis.lifecycle.js';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
@@ -45,7 +48,16 @@ export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
       inject: [ConfigService],
     },
     CacheService,
+    CacheInvalidationService,
+    IdempotencyService,
+    RedisLifecycleService,
   ],
-  exports: [REDIS_CLIENT, CacheService],
+  exports: [
+    REDIS_CLIENT,
+    CacheService,
+    CacheInvalidationService,
+    IdempotencyService,
+    RedisLifecycleService,
+  ],
 })
 export class RedisModule {}

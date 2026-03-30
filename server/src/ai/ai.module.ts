@@ -1,47 +1,44 @@
 import { Module, Global } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AiService } from './ai.service.js';
-import { AI_PROVIDER } from './interfaces/ai-provider.interface.js';
+import {
+  AI_PROVIDER,
+  AI_PROVIDERS,
+} from './interfaces/ai-provider.interface.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { OpenAiProvider } from './providers/openai.provider.js';
+import { OpenRouterProvider } from './providers/openrouter.provider.js';
 
 /**
  * AI Module — supports multiple AI providers.
- * 
- * Set AI_PROVIDER=openai or AI_PROVIDER=gemini in .env to choose.
- * Default: openai (more reliable for free tier usage).
+ *
+ * Provider priority order:
+ * 1) OpenRouter (primary)
+ * 2) Gemini (fallback)
+ * 3) OpenAI (fallback)
  */
 @Global()
 @Module({
   providers: [
+    OpenRouterProvider,
     GeminiProvider,
     OpenAiProvider,
     {
-      provide: AI_PROVIDER,
+      provide: AI_PROVIDERS,
       useFactory: (
-        configService: ConfigService,
+        openRouterProvider: OpenRouterProvider,
         geminiProvider: GeminiProvider,
         openAiProvider: OpenAiProvider,
       ) => {
-        const providerName = configService.get<string>('AI_PROVIDER') ?? 'openai';
-
-        if (providerName === 'gemini' && geminiProvider.isAvailable()) {
-          return geminiProvider;
-        }
-
-        if (openAiProvider.isAvailable()) {
-          return openAiProvider;
-        }
-
-        // Fallback to whatever is available
-        if (geminiProvider.isAvailable()) {
-          return geminiProvider;
-        }
-
-        // Return OpenAI provider even if unavailable — it will throw a clear error
-        return openAiProvider;
+        return [openRouterProvider, geminiProvider, openAiProvider];
       },
-      inject: [ConfigService, GeminiProvider, OpenAiProvider],
+      inject: [OpenRouterProvider, GeminiProvider, OpenAiProvider],
+    },
+    {
+      provide: AI_PROVIDER,
+      useFactory: (openRouterProvider: OpenRouterProvider) => {
+        return openRouterProvider;
+      },
+      inject: [OpenRouterProvider],
     },
     AiService,
   ],

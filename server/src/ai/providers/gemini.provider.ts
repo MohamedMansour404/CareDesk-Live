@@ -1,18 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AiProvider } from '../interfaces/ai-provider.interface.js';
 
 /**
- * Google Gemini AI provider with robust rate-limit handling.
- *
- * Free-tier Gemini API has aggressive per-minute rate limits (typically 15 RPM).
- * The API returns 429 with a `retryDelay` field (usually 18-46s).
+ * Google Gemini AI provider with controlled retry behavior.
  *
  * Strategy:
- * 1. Try the primary model first (configured in GEMINI_MODEL)
- * 2. On 429, wait for the API-specified retryDelay (or 20s default)
- * 3. If primary model fails all retries, try fallback models
+ * - 429 / quota errors: fail fast (no retry)
+ * - Other transient errors: max 1 retry with a short fixed delay
  */
 @Injectable()
 export class GeminiProvider extends AiProvider implements OnModuleInit {
@@ -20,13 +16,8 @@ export class GeminiProvider extends AiProvider implements OnModuleInit {
   private genAI: GoogleGenerativeAI | null = null;
   private primaryModelName: string;
   private available = false;
-
-  // Fallback models to try if primary model quota is exhausted
-  private readonly fallbackModels = [
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-  ];
+  private readonly maxAttempts = 2;
+  private readonly retryDelayMs = 2500;
 
   constructor(private configService: ConfigService) {
     super();
@@ -45,8 +36,7 @@ export class GeminiProvider extends AiProvider implements OnModuleInit {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.available = true;
     this.logger.log(
-      `Gemini provider initialized (primary: ${this.primaryModelName}, ` +
-        `fallbacks: ${this.fallbackModels.join(', ')})`,
+      `Gemini provider initialized (primary: ${this.primaryModelName})`,
     );
   }
 
@@ -55,48 +45,15 @@ export class GeminiProvider extends AiProvider implements OnModuleInit {
       throw new Error('Gemini not initialized – missing API key');
     }
 
-    // Try primary model with retries
-    const result = await this.tryModelWithRetries(
-      this.primaryModelName,
-      prompt,
-      3,
-    );
-    if (result !== null) return result;
+    const model = this.genAI.getGenerativeModel({
+      model: this.primaryModelName,
+    });
 
-    // Primary model exhausted — try fallback models (1 attempt each)
-    for (const fallbackModel of this.fallbackModels) {
-      this.logger.warn(
-        `Primary model ${this.primaryModelName} exhausted, trying fallback: ${fallbackModel}`,
-      );
-      const fallbackResult = await this.tryModelWithRetries(
-        fallbackModel,
-        prompt,
-        1,
-      );
-      if (fallbackResult !== null) return fallbackResult;
-    }
-
-    // All models exhausted
-    const quotaError = new Error(
-      `QUOTA_EXCEEDED: All models exhausted (primary: ${this.primaryModelName}, fallbacks: ${this.fallbackModels.join(', ')})`,
-    );
-    (quotaError as Error & { isQuota: boolean }).isQuota = true;
-    throw quotaError;
-  }
-
-  /**
-   * Try a specific model with retries.
-   * Returns the response text on success, or null if all retries are exhausted.
-   */
-  private async tryModelWithRetries(
-    modelName: string,
-    prompt: string,
-    maxAttempts: number,
-  ): Promise<string | null> {
-    const model = this.genAI!.getGenerativeModel({ model: modelName });
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
+        this.logger.debug(
+          `Gemini request attempt ${attempt}/${this.maxAttempts} (${this.primaryModelName})`,
+        );
         const result = await model.generateContent(prompt);
         const text = result.response.text();
 
@@ -104,9 +61,9 @@ export class GeminiProvider extends AiProvider implements OnModuleInit {
           throw new Error('Empty response from Gemini');
         }
 
-        if (attempt > 1 || modelName !== this.primaryModelName) {
+        if (attempt > 1) {
           this.logger.log(
-            `✅ Success with ${modelName} on attempt ${attempt}`,
+            `Gemini succeeded on retry attempt ${attempt} (${this.primaryModelName})`,
           );
         }
 
@@ -115,44 +72,25 @@ export class GeminiProvider extends AiProvider implements OnModuleInit {
         const message = error instanceof Error ? error.message : String(error);
 
         if (this.isQuotaError(message)) {
-          if (attempt < maxAttempts) {
-            // Extract retryDelay from error if available, otherwise use 20s default
-            const delay = this.extractRetryDelay(message);
-            this.logger.warn(
-              `Rate limited (429) on ${modelName} – attempt ${attempt}/${maxAttempts}, ` +
-                `waiting ${delay}ms...`,
-            );
-            await this.sleep(delay);
-            continue;
-          }
-          this.logger.warn(
-            `${modelName} quota exhausted after ${maxAttempts} attempts`,
+          const quotaError = new Error(
+            `QUOTA_EXCEEDED: Gemini rate limit reached on ${this.primaryModelName}`,
           );
-          return null; // Signal to try fallback
+          (quotaError as Error & { isQuota: boolean }).isQuota = true;
+          throw quotaError;
         }
 
-        // Non-quota error — rethrow immediately
-        throw error;
+        if (attempt >= this.maxAttempts) {
+          throw error;
+        }
+
+        this.logger.warn(
+          `Gemini transient error on attempt ${attempt}/${this.maxAttempts}: ${message}. Retrying in ${this.retryDelayMs}ms`,
+        );
+        await this.sleep(this.retryDelayMs);
       }
     }
 
-    return null;
-  }
-
-  /**
-   * Extract retryDelay from Gemini 429 error message.
-   * The error often contains "retryDelay":"18s" or similar.
-   * Returns delay in milliseconds. Default: 20000ms (20s).
-   */
-  private extractRetryDelay(errorMessage: string): number {
-    const match = errorMessage.match(/retryDelay["\s:]*(\d+)s/i);
-    if (match) {
-      const seconds = parseInt(match[1], 10);
-      // Add 2s buffer to be safe
-      return (seconds + 2) * 1000;
-    }
-    // Default to 20 seconds — matches typical free-tier retryDelay
-    return 20000;
+    throw new Error('Gemini request failed without explicit error');
   }
 
   /** Returns true for 429 / quota-exceeded / rate-limit errors */

@@ -6,6 +6,7 @@ export const SYSTEM_EVENTS = {
   MESSAGE_CREATED: 'message.created',
   MESSAGE_AGENT_REPLIED: 'message.agent.replied',
   MESSAGE_AI_PROCESSING_COMPLETE: 'message.ai.processing.complete',
+  MESSAGE_QUEUE_FAILED: 'message.queue.failed',
   CONVERSATION_CREATED: 'conversation.created',
   CONVERSATION_ASSIGNED: 'conversation.assigned',
   CONVERSATION_RESOLVED: 'conversation.resolved',
@@ -51,6 +52,15 @@ export class AiProcessingCompleteEvent {
   ) {}
 }
 
+export class MessageQueueFailedEvent {
+  constructor(
+    public readonly conversationId: string,
+    public readonly messageId: string,
+    public readonly reason: string,
+    public readonly correlationId?: string,
+  ) {}
+}
+
 export class ConversationCreatedEvent {
   constructor(
     public readonly conversationId: string,
@@ -67,9 +77,7 @@ export class ConversationAssignedEvent {
 }
 
 export class ConversationResolvedEvent {
-  constructor(
-    public readonly conversationId: string,
-  ) {}
+  constructor(public readonly conversationId: string) {}
 }
 
 export class ConversationTransferredEvent {

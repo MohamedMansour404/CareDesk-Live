@@ -5,7 +5,12 @@ export type EvaluationDocument = HydratedDocument<Evaluation>;
 
 @Schema({ timestamps: true })
 export class Evaluation {
-  @Prop({ type: Types.ObjectId, ref: 'Conversation', required: true, index: true })
+  @Prop({
+    type: Types.ObjectId,
+    ref: 'Conversation',
+    required: true,
+    index: true,
+  })
   conversation: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })

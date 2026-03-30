@@ -1,18 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { AiService } from '../../ai/ai.service.js';
-import { MessagesService } from '../messages.service.js';
-import { ConversationsService } from '../../conversations/conversations.service.js';
-import { QueueService } from '../../queue/queue.service.js';
-import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ConversationChannel, SenderRole } from '../../common/constants.js';
+import {
+  ConversationChannel,
+  MessageIntent,
+  MessagePriority,
+  SenderRole,
+} from '../../common/constants.js';
 import { sanitizeForPrompt } from '../../common/utils/sanitize.js';
-import { TtlSet } from '../../common/utils/ttl-set.js';
-import { logWithContext, LogContext } from '../../common/utils/log-with-context.js';
+import {
+  logWithContext,
+  LogContext,
+} from '../../common/utils/log-with-context.js';
 import {
   SYSTEM_EVENTS,
-  AiProcessingCompleteEvent,
+  MessageQueueFailedEvent,
 } from '../../common/events/index.js';
+import { MessageProcessingService } from './services/message-processing.service.js';
+import { IdempotencyService } from '../../common/services/idempotency.service.js';
+import { QueueService } from '../../queue/queue.service.js';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 /**
  * Handles message lifecycle events:
@@ -27,16 +33,11 @@ import {
 export class MessageEventListeners {
   private readonly logger = new Logger(MessageEventListeners.name);
 
-  // Bounded deduplication guard with TTL (60s expiry, max 1000 entries).
-  // Prevents: duplicate processing, memory leaks from stuck items.
-  private readonly processingSet = new TtlSet(1000, 60_000);
-
   constructor(
-    private aiService: AiService,
-    private messagesService: MessagesService,
-    private conversationsService: ConversationsService,
-    private queueService: QueueService,
-    private eventEmitter: EventEmitter2,
+    private readonly messageProcessingService: MessageProcessingService,
+    private readonly idempotencyService: IdempotencyService,
+    private readonly queueService: QueueService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   @OnEvent(SYSTEM_EVENTS.MESSAGE_CREATED, { async: true })
@@ -44,9 +45,9 @@ export class MessageEventListeners {
     conversationId: string;
     messageId: string;
     senderId: string;
-    senderRole: string;
+    senderRole: SenderRole;
     content: string;
-    channel: string;
+    channel: ConversationChannel;
     messageData: unknown;
     correlationId?: string;
   }) {
@@ -63,142 +64,101 @@ export class MessageEventListeners {
       channel: event.channel,
     };
 
-    // ── Deduplication guard (TTL-bounded) ──────────────────────────────────
-    if (!this.processingSet.add(event.messageId)) {
-      logWithContext(this.logger, 'warn', 'Duplicate event – skipping', ctx);
-      return;
-    }
+    const maxAttempts = 3;
+    const sanitized = sanitizeForPrompt(event.content);
 
-    try {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const startTime = Date.now();
-      const sanitized = sanitizeForPrompt(event.content);
+      try {
+        const result = await this.idempotencyService.runOnce(
+          'message-created-event',
+          event.messageId,
+          {
+            lockTtlSeconds: 60,
+            completionTtlSeconds: 24 * 60 * 60,
+          },
+          async () => {
+            const PROCESSING_TIMEOUT_MS = 45_000;
+            const processPromise = this.messageProcessingService.processMessage(
+              event,
+              sanitized,
+              ctx,
+            );
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Processing timeout after ${PROCESSING_TIMEOUT_MS}ms`,
+                    ),
+                  ),
+                PROCESSING_TIMEOUT_MS,
+              ),
+            );
 
-      // Wrap processing in a timeout to prevent zombie processing
-      const PROCESSING_TIMEOUT_MS = 45_000;
-      const processPromise = this.processMessage(event, sanitized, ctx);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Processing timeout after ${PROCESSING_TIMEOUT_MS}ms`)),
-          PROCESSING_TIMEOUT_MS,
-        ),
-      );
+            await Promise.race([processPromise, timeoutPromise]);
+          },
+        );
 
-      await Promise.race([processPromise, timeoutPromise]);
+        if (!result.executed) {
+          logWithContext(
+            this.logger,
+            'warn',
+            `Duplicate message event skipped (${result.reason})`,
+            ctx,
+          );
+          return;
+        }
 
-      logWithContext(this.logger, 'log', 'AI processing complete', {
-        ...ctx,
-        duration: Date.now() - startTime,
-      });
-    } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      logWithContext(this.logger, 'error', `Processing failed: ${errMsg}`, ctx);
-    } finally {
-      this.processingSet.delete(event.messageId);
-    }
-  }
+        logWithContext(this.logger, 'log', 'AI processing complete', {
+          ...ctx,
+          duration: Date.now() - startTime,
+          attempt,
+        });
 
-  /**
-   * Core processing logic — extracted for timeout wrapping.
-   */
-  private async processMessage(
-    event: {
-      conversationId: string;
-      messageId: string;
-      senderId: string;
-      channel: string;
-      correlationId?: string;
-    },
-    sanitized: string,
-    ctx: LogContext,
-  ): Promise<void> {
-    // Route by channel — AI channel uses a single combined API call to conserve quota
-    if (event.channel === ConversationChannel.AI) {
-      // COMBINED: analyze + respond in a single API call (halves quota usage)
-      const { analysis, response: aiResponseText } =
-        await this.aiService.analyzeAndRespond(sanitized);
+        return;
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
 
-      // Update message with analysis
-      await this.messagesService.updateAnalysis(
-        event.messageId,
-        analysis as unknown as Record<string, unknown>,
-      );
+        logWithContext(
+          this.logger,
+          'error',
+          `Processing failed (attempt ${attempt}/${maxAttempts}): ${errMsg}`,
+          ctx,
+        );
 
-      // Update conversation priority + language
-      await this.conversationsService.updatePriority(
-        event.conversationId,
-        analysis.priority,
-        analysis.intent,
-      );
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, Math.min(attempt * 1000, 3000)),
+          );
+          continue;
+        }
 
-      if (analysis.detectedLanguage) {
-        await this.conversationsService.updateLanguage(
-          event.conversationId,
-          analysis.detectedLanguage,
+        await this.queueService.addToDlq({
+          originalJobId: `listener:${event.messageId}`,
+          reason: errMsg,
+          attemptsMade: maxAttempts,
+          payload: {
+            conversationId: event.conversationId,
+            messageId: event.messageId,
+            patientId: event.senderId,
+            priority: MessagePriority.MEDIUM,
+            intent: MessageIntent.GENERAL,
+            idempotencyKey: `queue:message:${event.messageId}`,
+            correlationId: event.correlationId,
+          },
+        });
+
+        this.eventEmitter.emit(
+          SYSTEM_EVENTS.MESSAGE_QUEUE_FAILED,
+          new MessageQueueFailedEvent(
+            event.conversationId,
+            event.messageId,
+            errMsg,
+            event.correlationId,
+          ),
         );
       }
-
-      // Save and broadcast AI response
-      const aiMessage = await this.messagesService.saveAiResponse(
-        event.conversationId,
-        aiResponseText,
-      );
-
-      this.eventEmitter.emit(
-        SYSTEM_EVENTS.MESSAGE_AI_PROCESSING_COMPLETE,
-        new AiProcessingCompleteEvent(
-          event.conversationId,
-          event.messageId,
-          analysis,
-          aiMessage.toObject(),
-          ConversationChannel.AI,
-          event.correlationId,
-        ),
-      );
-    } else {
-      // HUMAN channel → analyze only (no AI response needed)
-      const analysis = await this.aiService.analyzeMessage(sanitized);
-
-      await this.messagesService.updateAnalysis(
-        event.messageId,
-        analysis as unknown as Record<string, unknown>,
-      );
-
-      await this.conversationsService.updatePriority(
-        event.conversationId,
-        analysis.priority,
-        analysis.intent,
-      );
-
-      if (analysis.detectedLanguage) {
-        await this.conversationsService.updateLanguage(
-          event.conversationId,
-          analysis.detectedLanguage,
-        );
-      }
-
-      // Add to priority queue with correlationId (non-blocking)
-      await this.queueService.addToQueue({
-        conversationId: event.conversationId,
-        messageId: event.messageId,
-        patientId: event.senderId,
-        priority: analysis.priority,
-        intent: analysis.intent,
-        correlationId: event.correlationId,
-      }).catch((err: Error) => {
-        logWithContext(this.logger, 'error', `Queue addToQueue failed: ${err.message}`, ctx);
-      });
-
-      this.eventEmitter.emit(
-        SYSTEM_EVENTS.MESSAGE_AI_PROCESSING_COMPLETE,
-        new AiProcessingCompleteEvent(
-          event.conversationId,
-          event.messageId,
-          analysis,
-          undefined,
-          ConversationChannel.HUMAN,
-          event.correlationId,
-        ),
-      );
     }
   }
 }

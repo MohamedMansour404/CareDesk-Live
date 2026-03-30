@@ -10,6 +10,11 @@ import { REDIS_CLIENT } from '../../config/redis.module.js';
 @Injectable()
 export class CacheService {
   private readonly logger = new Logger(CacheService.name);
+  private readonly indexPrefix = 'cache:index';
+
+  private toErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
 
   constructor(
     @Inject(REDIS_CLIENT) @Optional() private readonly redis: Redis | null,
@@ -34,7 +39,7 @@ export class CacheService {
         return JSON.parse(data) as T;
       }
     } catch (err: unknown) {
-      this.logger.warn(`Cache get failed: ${err}`);
+      this.logger.warn(`Cache get failed: ${this.toErrorMessage(err)}`);
     }
     return null;
   }
@@ -47,7 +52,30 @@ export class CacheService {
     try {
       await this.redis.setex(key, ttlSeconds, JSON.stringify(value));
     } catch (err: unknown) {
-      this.logger.warn(`Cache set failed: ${err}`);
+      this.logger.warn(`Cache set failed: ${this.toErrorMessage(err)}`);
+    }
+  }
+
+  async setTracked(
+    key: string,
+    value: unknown,
+    ttlSeconds: number,
+    namespace: string,
+  ): Promise<void> {
+    if (!this.redis) return;
+
+    const indexKey = this.toIndexKey(namespace);
+    const indexTtlSeconds = Math.max(ttlSeconds * 3, 24 * 60 * 60);
+
+    try {
+      const serializedValue = JSON.stringify(value);
+      const pipeline = this.redis.pipeline();
+      pipeline.setex(key, ttlSeconds, serializedValue);
+      pipeline.sadd(indexKey, key);
+      pipeline.expire(indexKey, indexTtlSeconds);
+      await pipeline.exec();
+    } catch (err: unknown) {
+      this.logger.warn(`Cache setTracked failed: ${this.toErrorMessage(err)}`);
     }
   }
 
@@ -60,7 +88,7 @@ export class CacheService {
       await this.redis.del(key);
       this.logger.debug(`Cache invalidated: ${key}`);
     } catch (err: unknown) {
-      this.logger.warn(`Cache invalidate failed: ${err}`);
+      this.logger.warn(`Cache invalidate failed: ${this.toErrorMessage(err)}`);
     }
   }
 
@@ -87,7 +115,28 @@ export class CacheService {
       } while (cursor !== '0');
       this.logger.debug(`Cache pattern invalidated: ${pattern}`);
     } catch (err: unknown) {
-      this.logger.warn(`Cache invalidatePattern failed: ${err}`);
+      this.logger.warn(
+        `Cache invalidatePattern failed: ${this.toErrorMessage(err)}`,
+      );
+    }
+  }
+
+  async invalidateNamespace(namespace: string): Promise<void> {
+    if (!this.redis) return;
+
+    const indexKey = this.toIndexKey(namespace);
+
+    try {
+      const keys = await this.redis.smembers(indexKey);
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+      }
+      await this.redis.del(indexKey);
+      this.logger.debug(`Cache namespace invalidated: ${namespace}`);
+    } catch (err: unknown) {
+      this.logger.warn(
+        `Cache invalidateNamespace failed: ${this.toErrorMessage(err)}`,
+      );
     }
   }
 
@@ -96,5 +145,9 @@ export class CacheService {
    */
   isAvailable(): boolean {
     return this.redis !== null;
+  }
+
+  private toIndexKey(namespace: string): string {
+    return `${this.indexPrefix}:${namespace}`;
   }
 }

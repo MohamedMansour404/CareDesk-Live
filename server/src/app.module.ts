@@ -1,4 +1,3 @@
-
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -8,6 +7,9 @@ import configuration from './config/configuration.js';
 import { RedisModule } from './config/redis.module.js';
 import { buildBullRedisOptions } from './common/utils/redis.js';
 import { CorrelationMiddleware } from './common/middleware/correlation.middleware.js';
+import { ShutdownOrchestratorService } from './common/services/shutdown-orchestrator.service.js';
+import { SecurityModule } from './security/security.module.js';
+import { GlobalRateLimitMiddleware } from './security/global-rate-limit.middleware.js';
 
 // Feature modules
 import { AuthModule } from './auth/auth.module.js';
@@ -38,6 +40,7 @@ import { HealthModule } from './health/health.module.js';
 
     // ── Shared Redis client (global) ──────────
     RedisModule,
+    SecurityModule,
 
     // ── MongoDB (with pool config) ─────────────
     MongooseModule.forRootAsync({
@@ -56,7 +59,8 @@ import { HealthModule } from './health/health.module.js';
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const redisUrl = configService.get<string>('redis.url') ?? 'redis://localhost:6379';
+        const redisUrl =
+          configService.get<string>('redis.url') ?? 'redis://localhost:6379';
         return { redis: buildBullRedisOptions(redisUrl) };
       },
       inject: [ConfigService],
@@ -74,11 +78,13 @@ import { HealthModule } from './health/health.module.js';
     AnalyticsModule,
     HealthModule,
   ],
+  providers: [ShutdownOrchestratorService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     // Apply correlation middleware to ALL routes
-    consumer.apply(CorrelationMiddleware).forRoutes('*');
+    consumer
+      .apply(CorrelationMiddleware, GlobalRateLimitMiddleware)
+      .forRoutes('*');
   }
 }
-

@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
-import { AiProvider, AI_PROVIDER } from './interfaces/ai-provider.interface.js';
+import { AiProvider } from './interfaces/ai-provider.interface.js';
 import { PROMPTS } from './prompts/index.js';
 import {
   AnalysisResultDto,
@@ -29,12 +29,13 @@ export class AiService {
   private readonly cacheTtl: number;
 
   constructor(
-    @Inject(AI_PROVIDER) private readonly provider: AiProvider,
+    @Inject('AI_PROVIDERS') private readonly providers: AiProvider[],
     private configService: ConfigService,
   ) {
     this.cacheTtl = this.configService.get<number>('ai.cacheTtlMs') ?? 300_000;
+    const providerOrder = this.providers.map((provider) => provider.getName());
     this.logger.log(
-      `AI Service initialized with provider: ${provider.getName()}`,
+      `AI Service initialized with provider order: ${providerOrder.join(' -> ')}`,
     );
   }
 
@@ -92,7 +93,7 @@ export class AiService {
     } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`AI response generation failed: ${errMsg}`);
-      return this.getFallbackResponse(analysis);
+      return this.getFallbackResponse(analysis, message);
     }
   }
 
@@ -137,10 +138,18 @@ export class AiService {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(`Combined analyze+respond failed: ${errMsg}`);
 
-      const fallbackAnalysis = this.getFallbackAnalysis();
+      if (this.isRateLimitError(error)) {
+        const quotaFallback = this.getFallbackAnalysis();
+        return {
+          analysis: quotaFallback,
+          response: this.getFallbackResponse(quotaFallback, message),
+        };
+      }
+
+      const fallbackAnalysis = this.getHeuristicAnalysis(message);
       return {
         analysis: fallbackAnalysis,
-        response: this.getFallbackResponse(fallbackAnalysis),
+        response: this.getFallbackResponse(fallbackAnalysis, message),
       };
     }
   }
@@ -202,21 +211,51 @@ export class AiService {
   // ─────────────────────────────────────────────
 
   /**
-   * Calls the AI provider. Retry logic is now handled within the provider itself
-   * (exponential backoff for 429 errors). This method just checks availability
-   * and delegates the call.
+   * Calls the selected AI provider.
    */
-  private async callProviderWithRetry(
-    prompt: string,
-    _maxRetries = 1,
-  ): Promise<string> {
-    if (!this.provider.isAvailable()) {
-      throw new Error(
-        `AI provider ${this.provider.getName()} is not available`,
-      );
+  private async callProviderWithRetry(prompt: string): Promise<string> {
+    const failures: string[] = [];
+
+    for (const provider of this.providers) {
+      const providerName = provider.getName();
+
+      if (!provider.isAvailable()) {
+        this.logger.warn(`AI provider unavailable, skipping: ${providerName}`);
+        failures.push(`${providerName}: unavailable`);
+        continue;
+      }
+
+      try {
+        this.logger.log(`AI provider attempt: ${providerName}`);
+        const result = await provider.generateContent(prompt);
+        this.logger.log(`AI provider success: ${providerName}`);
+        return result;
+      } catch (error: unknown) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `AI provider failed: ${providerName}. Falling back. Reason: ${errMsg}`,
+        );
+        failures.push(`${providerName}: ${errMsg}`);
+
+        if (this.isRateLimitError(error)) {
+          await this.sleep(800);
+        }
+      }
     }
 
-    return await this.provider.generateContent(prompt);
+    throw new Error(`All AI providers failed: ${failures.join(' | ')}`);
+  }
+
+  private isRateLimitError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+      message.includes('429') ||
+      message.includes('RESOURCE_EXHAUSTED') ||
+      message.includes('QUOTA_EXCEEDED') ||
+      message.includes('Too Many Requests') ||
+      message.includes('rate limit') ||
+      message.includes('Rate Limit')
+    );
   }
 
   /**
@@ -323,7 +362,9 @@ export class AiService {
   private setCache(key: string, data: AnalysisResultDto): void {
     // Evict old entries if cache grows beyond 1000
     if (this.analysisCache.size > 1000) {
-      const firstKey = this.analysisCache.keys().next().value;
+      const firstKey = this.analysisCache.keys().next().value as
+        | string
+        | undefined;
       if (firstKey) this.analysisCache.delete(firstKey);
     }
 
@@ -346,13 +387,15 @@ export class AiService {
     };
   }
 
-  private getFallbackResponse(analysis: AnalysisResultDto): string {
+  private getFallbackResponse(
+    analysis: AnalysisResultDto,
+    message?: string,
+  ): string {
     // Check if this is a quota/rate-limit situation
     const isQuota = analysis.confidence === 0;
     if (isQuota) {
       return (
-        `⚠️ The AI assistant is temporarily unavailable due to high demand. ` +
-        `Please try again in a few minutes, or click "Human Agent" to speak with a specialist right away.\n\n` +
+        `AI is currently busy, please try again shortly.\n\n` +
         `${AI_DISCLAIMER}`
       );
     }
@@ -369,11 +412,93 @@ export class AiService {
       );
     }
 
+    const normalizedMessage = (message ?? '').toLowerCase();
+
+    if (analysis.intent === MessageIntent.APPOINTMENT) {
+      return (
+        `I can help with appointment coordination. Please share your preferred date/time window, ` +
+        `and I can route this to the scheduling team right away.\n\n` +
+        `${AI_DISCLAIMER}`
+      );
+    }
+
+    if (analysis.intent === MessageIntent.MEDICATION) {
+      return (
+        `Thanks for your medication question. For safety, I can't provide dosing advice, ` +
+        `but I can help connect you with a clinician or pharmacist for accurate guidance.\n\n` +
+        `${AI_DISCLAIMER}`
+      );
+    }
+
+    if (analysis.intent === MessageIntent.SYMPTOM_REPORT) {
+      return (
+        `I'm sorry you're not feeling well. Could you share when symptoms started, whether they are worsening, ` +
+        `and if you have fever, severe pain, or breathing issues so we can triage correctly?\n\n` +
+        `${AI_DISCLAIMER}`
+      );
+    }
+
+    if (normalizedMessage.includes('reschedule')) {
+      return (
+        `I can help with rescheduling. Please confirm your preferred new time and any constraints, ` +
+        `and I’ll prepare this for the care team.\n\n` +
+        `${AI_DISCLAIMER}`
+      );
+    }
+
     return (
       `Thank you for reaching out! I'm having a brief technical issue. ` +
       `Please try again in a moment, or I can connect you with a human specialist.\n\n` +
       `${AI_DISCLAIMER}`
     );
+  }
+
+  private getHeuristicAnalysis(message: string): AnalysisResultDto {
+    const text = message.toLowerCase();
+
+    const isEmergency =
+      /chest pain|breathing|can't breathe|severe bleeding|suicid|unconscious/.test(
+        text,
+      );
+    const isAppointment = /appointment|schedule|reschedule|cancel/.test(text);
+    const isMedication = /medication|dose|dosage|side effect|pill|drug/.test(
+      text,
+    );
+    const isSymptom = /pain|fever|headache|cough|nausea|dizzy|symptom/.test(
+      text,
+    );
+
+    let intent = MessageIntent.GENERAL;
+    let priority = MessagePriority.LOW;
+    let sentiment = MessageSentiment.NEUTRAL;
+    let shouldEscalate = false;
+
+    if (isEmergency) {
+      intent = MessageIntent.EMERGENCY;
+      priority = MessagePriority.HIGH;
+      sentiment = MessageSentiment.DISTRESS;
+      shouldEscalate = true;
+    } else if (isAppointment) {
+      intent = MessageIntent.APPOINTMENT;
+      priority = MessagePriority.LOW;
+    } else if (isMedication) {
+      intent = MessageIntent.MEDICATION;
+      priority = MessagePriority.MEDIUM;
+    } else if (isSymptom) {
+      intent = MessageIntent.SYMPTOM_REPORT;
+      priority = MessagePriority.MEDIUM;
+      sentiment = MessageSentiment.DISTRESS;
+    }
+
+    return {
+      intent,
+      priority,
+      sentiment,
+      confidence: 0.65,
+      shouldEscalate,
+      detectedLanguage: 'en',
+      reasoning: 'Heuristic fallback analysis used after provider failure',
+    };
   }
 
   private sleep(ms: number): Promise<void> {

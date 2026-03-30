@@ -25,6 +25,21 @@ export interface LogContext {
 function formatContext(ctx: LogContext): string {
   const parts: string[] = [];
 
+  const stringifyValue = (value: unknown): string => {
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    if (value === null) return 'null';
+    if (value instanceof Date) return value.toISOString();
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[unserializable]';
+    }
+  };
+
   if (ctx.correlationId) parts.push(`cid=${ctx.correlationId.slice(0, 8)}`);
   if (ctx.conversationId) parts.push(`conv=${ctx.conversationId.slice(-6)}`);
   if (ctx.messageId) parts.push(`msg=${ctx.messageId.slice(-6)}`);
@@ -37,12 +52,17 @@ function formatContext(ctx: LogContext): string {
   for (const [key, value] of Object.entries(ctx)) {
     if (
       ![
-        'correlationId', 'conversationId', 'messageId',
-        'userId', 'jobId', 'channel', 'duration',
+        'correlationId',
+        'conversationId',
+        'messageId',
+        'userId',
+        'jobId',
+        'channel',
+        'duration',
       ].includes(key) &&
       value !== undefined
     ) {
-      parts.push(`${key}=${value}`);
+      parts.push(`${key}=${stringifyValue(value)}`);
     }
   }
 

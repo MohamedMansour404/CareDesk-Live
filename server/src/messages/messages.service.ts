@@ -1,14 +1,15 @@
-import { Injectable, Logger, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Model, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema.js';
 import { CreateMessageDto } from './dto/create-message.dto.js';
-import {
-  SenderRole,
-  ConversationChannel,
-  ConversationStatus,
-} from '../common/constants.js';
+import { SenderRole, ConversationStatus } from '../common/constants.js';
 import { ConversationsService } from '../conversations/conversations.service.js';
 import { PaginatedResult } from '../common/dto/pagination.dto.js';
 import {
@@ -16,7 +17,13 @@ import {
   MessageCreatedEvent,
   AgentRepliedEvent,
 } from '../common/events/index.js';
-import { logWithContext, LogContext } from '../common/utils/log-with-context.js';
+import {
+  logWithContext,
+  LogContext,
+} from '../common/utils/log-with-context.js';
+import { CacheInvalidationService } from '../common/services/cache-invalidation.service.js';
+import { CacheService } from '../common/services/cache.service.js';
+import { CACHE_KEYS, CACHE_TTLS } from '../common/cache/cache-keys.js';
 
 @Injectable()
 export class MessagesService {
@@ -26,6 +33,8 @@ export class MessagesService {
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
     private conversationsService: ConversationsService,
     private eventEmitter: EventEmitter2,
+    private cacheInvalidationService: CacheInvalidationService,
+    private cacheService: CacheService,
   ) {}
 
   /**
@@ -46,7 +55,15 @@ export class MessagesService {
 
     // Guard: prevent messages to resolved conversations
     if (conversation.status === ConversationStatus.RESOLVED) {
-      throw new BadRequestException('Cannot send messages to a resolved conversation');
+      throw new BadRequestException(
+        'Cannot send messages to a resolved conversation',
+      );
+    }
+
+    if (conversation.patient._id?.toString() !== senderId) {
+      throw new ForbiddenException(
+        'Not authorized to send messages in this conversation',
+      );
     }
 
     // 1. Save the patient's message immediately
@@ -56,6 +73,10 @@ export class MessagesService {
       senderRole: SenderRole.PATIENT,
       content: dto.content,
     });
+
+    await this.cacheInvalidationService.invalidateMessageMutation(
+      conversationId,
+    );
 
     // 2. Emit event for async processing (AI analysis, queue, WebSocket)
     this.eventEmitter.emit(
@@ -72,11 +93,16 @@ export class MessagesService {
       ),
     );
 
-    logWithContext(this.logger, 'log', 'Patient message saved, processing async', {
-      ...ctx,
-      messageId: patientMessage._id.toString(),
-      channel: conversation.channel,
-    });
+    logWithContext(
+      this.logger,
+      'log',
+      'Patient message saved, processing async',
+      {
+        ...ctx,
+        messageId: patientMessage._id.toString(),
+        channel: conversation.channel,
+      },
+    );
 
     // 3. Return immediately — AI results delivered via WebSocket
     return {
@@ -96,15 +122,20 @@ export class MessagesService {
     correlationId?: string,
   ) {
     // Guard: check conversation state before any mutations
-    const conversation = await this.conversationsService.findById(conversationId);
+    const conversation =
+      await this.conversationsService.findById(conversationId);
 
     if (conversation.status === ConversationStatus.RESOLVED) {
-      throw new BadRequestException('Cannot send messages to a resolved conversation');
+      throw new BadRequestException(
+        'Cannot send messages to a resolved conversation',
+      );
     }
 
     // Ownership guard: only the assigned agent can reply
     if (conversation.agent && conversation.agent._id?.toString() !== agentId) {
-      throw new ForbiddenException('This conversation is assigned to another agent');
+      throw new ForbiddenException(
+        'This conversation is assigned to another agent',
+      );
     }
 
     // Transition pending/assigned → in_progress on first agent reply (idempotent)
@@ -116,6 +147,10 @@ export class MessagesService {
       senderRole: SenderRole.AGENT,
       content: dto.content,
     });
+
+    await this.cacheInvalidationService.invalidateMessageMutation(
+      conversationId,
+    );
 
     // Emit event — evaluation + WebSocket handled by listeners
     this.eventEmitter.emit(
@@ -148,6 +183,15 @@ export class MessagesService {
     page = 1,
     limit = 50,
   ): Promise<PaginatedResult<MessageDocument>> {
+    const cacheKey = CACHE_KEYS.conversationMessages(
+      conversationId,
+      page,
+      limit,
+    );
+    const cached =
+      await this.cacheService.get<PaginatedResult<MessageDocument>>(cacheKey);
+    if (cached) return cached;
+
     const filter = { conversation: new Types.ObjectId(conversationId) };
     const total = await this.messageModel.countDocuments(filter);
 
@@ -160,7 +204,7 @@ export class MessagesService {
       .lean()
       .exec();
 
-    return {
+    const result = {
       data,
       meta: {
         total,
@@ -169,6 +213,15 @@ export class MessagesService {
         totalPages: Math.ceil(total / limit),
       },
     };
+
+    await this.cacheService.setTracked(
+      cacheKey,
+      result,
+      CACHE_TTLS.conversationMessages,
+      CACHE_KEYS.conversationMessagesNamespace(conversationId),
+    );
+
+    return result;
   }
 
   /**
@@ -209,7 +262,16 @@ export class MessagesService {
     messageId: string,
     analysis: Record<string, unknown>,
   ): Promise<void> {
-    await this.messageModel.findByIdAndUpdate(messageId, { analysis });
+    const updated = await this.messageModel.findByIdAndUpdate(messageId, {
+      analysis,
+    });
+
+    const conversationId = updated?.conversation?.toString();
+    if (conversationId) {
+      await this.cacheInvalidationService.invalidateMessageMutation(
+        conversationId,
+      );
+    }
   }
 
   /**
@@ -219,11 +281,17 @@ export class MessagesService {
     conversationId: string,
     content: string,
   ): Promise<MessageDocument> {
-    return this.saveMessage({
+    const message = await this.saveMessage({
       conversation: conversationId,
       senderRole: SenderRole.AI,
       content,
     });
+
+    await this.cacheInvalidationService.invalidateMessageMutation(
+      conversationId,
+    );
+
+    return message;
   }
 
   private async saveMessage(data: {

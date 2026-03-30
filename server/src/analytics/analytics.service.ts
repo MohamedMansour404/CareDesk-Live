@@ -1,20 +1,58 @@
-import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../config/redis.module.js';
 import {
   Conversation,
   ConversationDocument,
 } from '../conversations/schemas/conversation.schema.js';
-import { Message, MessageDocument } from '../messages/schemas/message.schema.js';
+import {
+  Message,
+  MessageDocument,
+} from '../messages/schemas/message.schema.js';
 import {
   Evaluation,
   EvaluationDocument,
 } from '../evaluation/schemas/evaluation.schema.js';
+import { CACHE_KEYS, CACHE_TTLS } from '../common/cache/cache-keys.js';
+import { CacheService } from '../common/services/cache.service.js';
 
-const CACHE_PREFIX = 'analytics:';
-const CACHE_TTL = 60; // seconds
+type DistributionRow = { _id: string | null; count: number };
+type AvgResponseRow = { _id: null; avgResponseTimeMs: number };
+type EvaluationStatsRow = {
+  _id: null;
+  averageScore: number;
+  totalEvaluations: number;
+  minScore: number;
+  maxScore: number;
+};
+
+type AnalyticsOverview = {
+  totalConversations: number;
+  activeConversations: number;
+  resolvedConversations: number;
+  resolutionRate: number;
+  totalMessages: number;
+  priorityDistribution: Record<string, number>;
+  intentDistribution: Record<string, number>;
+  channelDistribution: Record<string, number>;
+};
+
+type AgentEvaluationStats = {
+  averageScore: number;
+  totalEvaluations: number;
+  minScore: number;
+  maxScore: number;
+};
+
+type AgentStats = {
+  agentId: string;
+  totalConversations: number;
+  resolvedConversations: number;
+  resolutionRate: number;
+  avgResponseTimeMs: number;
+  avgResponseTimeFormatted: string;
+  evaluation: AgentEvaluationStats;
+};
 
 @Injectable()
 export class AnalyticsService {
@@ -27,19 +65,15 @@ export class AnalyticsService {
     private messageModel: Model<MessageDocument>,
     @InjectModel(Evaluation.name)
     private evaluationModel: Model<EvaluationDocument>,
-    @Inject(REDIS_CLIENT) @Optional() private redis: Redis | null,
-  ) {
-    if (this.redis) {
-      this.logger.log('Analytics using shared Redis cache');
-    }
-  }
+    private cacheService: CacheService,
+  ) {}
 
   /**
    * Get overall system statistics (cached 60s).
    */
-  async getOverviewStats() {
-    const cacheKey = `${CACHE_PREFIX}overview`;
-    const cached = await this.getCache(cacheKey);
+  async getOverviewStats(): Promise<AnalyticsOverview> {
+    const cacheKey = CACHE_KEYS.analyticsOverview;
+    const cached = await this.getCache<AnalyticsOverview>(cacheKey);
     if (cached) return cached;
 
     const [
@@ -85,9 +119,9 @@ export class AnalyticsService {
   /**
    * Get per-agent performance statistics (cached 60s).
    */
-  async getAgentStats(agentId: string) {
-    const cacheKey = `${CACHE_PREFIX}agent:${agentId}`;
-    const cached = await this.getCache(cacheKey);
+  async getAgentStats(agentId: string): Promise<AgentStats> {
+    const cacheKey = CACHE_KEYS.analyticsAgent(agentId);
+    const cached = await this.getCache<AgentStats>(cacheKey);
     if (cached) return cached;
 
     const agentOid = new Types.ObjectId(agentId);
@@ -128,27 +162,21 @@ export class AnalyticsService {
   // CACHE HELPERS
   // ─────────────────────────────────────────────
 
-  private async getCache(key: string): Promise<unknown | null> {
-    if (!this.redis) return null;
-    try {
-      const data = await this.redis.get(key);
-      if (data) {
-        this.logger.debug(`Analytics cache HIT: ${key}`);
-        return JSON.parse(data);
-      }
-    } catch (err: unknown) {
-      this.logger.warn(`Redis cache read failed: ${err}`);
+  private async getCache<T>(key: string): Promise<T | null> {
+    const value = await this.cacheService.get<T>(key);
+    if (value) {
+      this.logger.debug(`Analytics cache HIT: ${key}`);
     }
-    return null;
+    return value;
   }
 
   private async setCache(key: string, value: unknown): Promise<void> {
-    if (!this.redis) return;
-    try {
-      await this.redis.setex(key, CACHE_TTL, JSON.stringify(value));
-    } catch (err: unknown) {
-      this.logger.warn(`Redis cache write failed: ${err}`);
-    }
+    await this.cacheService.setTracked(
+      key,
+      value,
+      CACHE_TTLS.analytics,
+      CACHE_KEYS.analyticsNamespace,
+    );
   }
 
   // ─────────────────────────────────────────────
@@ -159,14 +187,14 @@ export class AnalyticsService {
     model: Model<unknown>,
     field: string,
   ): Promise<Record<string, number>> {
-    const result = await model.aggregate([
+    const result = await model.aggregate<DistributionRow>([
       { $group: { _id: `$${field}`, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]);
 
     const distribution: Record<string, number> = {};
     for (const item of result) {
-      if (item._id) {
+      if (typeof item._id === 'string') {
         distribution[item._id] = item.count;
       }
     }
@@ -176,7 +204,7 @@ export class AnalyticsService {
   private async calculateAvgResponseTime(
     agentOid: Types.ObjectId,
   ): Promise<number> {
-    const result = await this.messageModel.aggregate([
+    const result = await this.messageModel.aggregate<AvgResponseRow>([
       {
         $match: {
           sender: agentOid,
@@ -224,8 +252,10 @@ export class AnalyticsService {
     return result.length > 0 ? Math.round(result[0].avgResponseTimeMs) : 0;
   }
 
-  private async getAgentEvaluationStats(agentOid: Types.ObjectId) {
-    const result = await this.evaluationModel.aggregate([
+  private async getAgentEvaluationStats(
+    agentOid: Types.ObjectId,
+  ): Promise<AgentEvaluationStats> {
+    const result = await this.evaluationModel.aggregate<EvaluationStatsRow>([
       { $match: { agent: agentOid } },
       {
         $group: {

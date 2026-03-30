@@ -60,7 +60,7 @@ export function createRedisClient(
 export function buildBullRedisOptions(redisUrl: string): RedisOptions {
   return {
     ...parseRedisUrl(redisUrl),
-    maxRetriesPerRequest: null,   // Bull requirement
-    enableReadyCheck: false,      // Bull requirement
+    maxRetriesPerRequest: null, // Bull requirement
+    enableReadyCheck: false, // Bull requirement
   };
 }

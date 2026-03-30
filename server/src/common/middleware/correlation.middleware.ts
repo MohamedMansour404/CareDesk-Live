@@ -20,8 +20,9 @@ export class CorrelationMiddleware implements NestMiddleware {
 
     // Attach to request for downstream usage
     (req as unknown as CorrelatedRequest).correlationId = correlationId;
-    (req as unknown as CorrelatedRequest).userId =
-      (req as unknown as { user?: { userId?: string } }).user?.userId;
+    (req as unknown as CorrelatedRequest).userId = (
+      req as unknown as { user?: { userId?: string } }
+    ).user?.userId;
 
     // Set response header for client-side debugging
     _res.setHeader('X-Correlation-ID', correlationId);

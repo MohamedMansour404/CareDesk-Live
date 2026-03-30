@@ -16,6 +16,16 @@ async function bootstrap() {
     .get<string>('ws.corsOrigin', 'http://localhost:5173')
     .split(',')
     .map((origin) => origin.trim());
+  const trustProxy = configService.get<boolean | number | string | string[]>(
+    'security.trustProxy',
+    false,
+  );
+  const httpServer = app.getHttpAdapter().getInstance() as {
+    set?: (name: string, value: unknown) => void;
+  };
+  if (typeof httpServer.set === 'function') {
+    httpServer.set('trust proxy', trustProxy);
+  }
 
   // ── Graceful Shutdown ───────────────────────
   app.enableShutdownHooks();
@@ -53,4 +63,4 @@ async function bootstrap() {
   logger.log(`💚 Health check: http://localhost:${port}/api/health`);
 }
 
-bootstrap();
+void bootstrap();

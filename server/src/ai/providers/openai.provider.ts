@@ -48,7 +48,8 @@ export class OpenAiProvider extends AiProvider implements OnModuleInit {
           messages: [
             {
               role: 'system',
-              content: 'You are CareDesk AI, a healthcare support assistant. Always respond with valid JSON when the prompt asks for JSON.',
+              content:
+                'You are CareDesk AI, a healthcare support assistant. Always respond with valid JSON when the prompt asks for JSON.',
             },
             { role: 'user', content: prompt },
           ],
@@ -89,7 +90,11 @@ export class OpenAiProvider extends AiProvider implements OnModuleInit {
   }
 
   private isRateLimitError(message: string, error: unknown): boolean {
-    if (message.includes('429') || message.includes('rate_limit') || message.includes('Rate limit')) {
+    if (
+      message.includes('429') ||
+      message.includes('rate_limit') ||
+      message.includes('Rate limit')
+    ) {
       return true;
     }
     // Check OpenAI error status

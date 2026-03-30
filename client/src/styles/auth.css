@@ -14,13 +14,25 @@
 
 /* Animated gradient mesh background */
 .auth-page::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse 80% 60% at 20% 40%, rgba(59, 130, 246, 0.12), transparent),
-    radial-gradient(ellipse 60% 80% at 80% 20%, rgba(139, 92, 246, 0.1), transparent),
-    radial-gradient(ellipse 70% 50% at 50% 90%, rgba(6, 182, 212, 0.08), transparent);
+    radial-gradient(
+      ellipse 80% 60% at 20% 40%,
+      rgba(59, 130, 246, 0.12),
+      transparent
+    ),
+    radial-gradient(
+      ellipse 60% 80% at 80% 20%,
+      rgba(139, 92, 246, 0.1),
+      transparent
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 50% 90%,
+      rgba(6, 182, 212, 0.08),
+      transparent
+    );
   animation: meshShift 12s ease-in-out infinite alternate;
 }
 
@@ -95,7 +107,9 @@
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: 0.9375rem;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .auth-field input:focus {
@@ -105,6 +119,16 @@
 
 .auth-field input::placeholder {
   color: var(--text-muted);
+}
+
+.auth-note {
+  margin-top: -6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
 }
 
 .auth-btn {
@@ -136,7 +160,7 @@
 
 /* Shimmer effect on hover */
 .auth-btn::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   background: linear-gradient(
@@ -176,7 +200,7 @@
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.2);
   border-radius: var(--radius-sm);
-  color: #FCA5A5;
+  color: #fca5a5;
   font-size: 0.8125rem;
   text-align: center;
 }

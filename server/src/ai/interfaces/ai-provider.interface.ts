@@ -26,3 +26,4 @@ export abstract class AiProvider {
  * Injection token for the AI provider.
  */
 export const AI_PROVIDER = 'AI_PROVIDER';
+export const AI_PROVIDERS = 'AI_PROVIDERS';

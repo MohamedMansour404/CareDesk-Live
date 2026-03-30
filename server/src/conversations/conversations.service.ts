@@ -4,14 +4,19 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  InternalServerErrorException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Model, Types } from 'mongoose';
+import { Connection, Model, Types } from 'mongoose';
 import {
   Conversation,
   ConversationDocument,
 } from './schemas/conversation.schema.js';
+import {
+  Message,
+  MessageDocument,
+} from '../messages/schemas/message.schema.js';
 import { CreateConversationDto } from './dto/create-conversation.dto.js';
 import { TransferConversationDto } from './dto/transfer-conversation.dto.js';
 import { PaginatedResult } from '../common/dto/pagination.dto.js';
@@ -21,9 +26,12 @@ import {
   MessagePriority,
   MessageIntent,
   UserRole,
+  SenderRole,
 } from '../common/constants.js';
 import { UsersService } from '../users/users.service.js';
 import { CacheService } from '../common/services/cache.service.js';
+import { CacheInvalidationService } from '../common/services/cache-invalidation.service.js';
+import { CACHE_KEYS, CACHE_TTLS } from '../common/cache/cache-keys.js';
 import {
   SYSTEM_EVENTS,
   ConversationCreatedEvent,
@@ -31,16 +39,9 @@ import {
   ConversationResolvedEvent,
   ConversationTransferredEvent,
   ConversationEscalatedEvent,
+  MessageCreatedEvent,
 } from '../common/events/index.js';
-
-// Cache key patterns and TTLs
-const CACHE = {
-  CONV: (id: string) => `conv:${id}`,
-  QUEUE: (page: number, limit: number) => `conv:queue:${page}:${limit}`,
-  QUEUE_PATTERN: 'conv:queue:*',
-  TTL_CONV: 30,      // 30s for individual conversations
-  TTL_QUEUE: 10,     // 10s for queue list (agents need fresh data)
-};
+import { TriageService } from './services/triage.service.js';
 
 @Injectable()
 export class ConversationsService {
@@ -49,58 +50,255 @@ export class ConversationsService {
   constructor(
     @InjectModel(Conversation.name)
     private conversationModel: Model<ConversationDocument>,
+    @InjectModel(Message.name)
+    private messageModel: Model<MessageDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private usersService: UsersService,
     private eventEmitter: EventEmitter2,
     private cacheService: CacheService,
+    private cacheInvalidationService: CacheInvalidationService,
+    private triageService: TriageService,
   ) {}
+
+  private isTransactionUnsupported(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    const lower = message.toLowerCase();
+    return (
+      lower.includes('transaction numbers are only allowed') ||
+      lower.includes('replica set') ||
+      lower.includes('transactions are not supported')
+    );
+  }
+
+  private buildIntakeSnapshot(dto: CreateConversationDto) {
+    if (!dto.intake) {
+      return undefined;
+    }
+
+    const chronicConditions = (dto.intake.clinical.chronicConditions ?? [])
+      .map((condition) => condition.trim())
+      .filter((condition) => condition.length > 0);
+
+    const normalized = {
+      version: dto.intake.version ?? 1,
+      demographics: dto.intake.demographics,
+      vitals: dto.intake.vitals,
+      clinical: {
+        ...dto.intake.clinical,
+        chronicConditions,
+        mainComplaint: dto.intake.clinical.mainComplaint.trim(),
+      },
+    };
+
+    const triage = this.triageService.assessIntake(normalized);
+
+    return {
+      snapshot: {
+        ...normalized,
+        triage: {
+          level: triage.level,
+          score: triage.score,
+          source: triage.source,
+          reasons: triage.reasons,
+          classifiedAt: triage.classifiedAt,
+        },
+      },
+      mappedPriority: triage.mappedPriority,
+      complaint: normalized.clinical.mainComplaint,
+    };
+  }
+
+  private buildConversationPayload(
+    patientId: string,
+    dto: CreateConversationDto,
+  ) {
+    const intakeResult = this.buildIntakeSnapshot(dto);
+    return {
+      payload: {
+        patient: new Types.ObjectId(patientId),
+        channel: dto.channel,
+        status:
+          dto.channel === ConversationChannel.AI
+            ? ConversationStatus.IN_PROGRESS
+            : ConversationStatus.PENDING,
+        ...(intakeResult
+          ? {
+              priority: intakeResult.mappedPriority,
+              intake: intakeResult.snapshot,
+            }
+          : {}),
+      },
+      intakeResult,
+    };
+  }
+
+  private async emitConversationCreated(
+    savedConversation: ConversationDocument,
+    dto: CreateConversationDto,
+    patientId: string,
+    complaintMessage?: MessageDocument,
+  ): Promise<void> {
+    await this.cacheInvalidationService.invalidateConversationList();
+
+    this.eventEmitter.emit(
+      SYSTEM_EVENTS.CONVERSATION_CREATED,
+      new ConversationCreatedEvent(
+        savedConversation._id.toString(),
+        dto.channel,
+        savedConversation.toObject(),
+      ),
+    );
+
+    if (!complaintMessage) {
+      return;
+    }
+
+    this.eventEmitter.emit(
+      SYSTEM_EVENTS.MESSAGE_CREATED,
+      new MessageCreatedEvent(
+        savedConversation._id.toString(),
+        complaintMessage._id.toString(),
+        patientId,
+        SenderRole.PATIENT,
+        complaintMessage.content,
+        savedConversation.channel,
+        complaintMessage.toObject(),
+      ),
+    );
+  }
+
+  private async createWithTransaction(
+    patientId: string,
+    dto: CreateConversationDto,
+  ): Promise<ConversationDocument> {
+    const session = await this.connection.startSession();
+    const { payload, intakeResult } = this.buildConversationPayload(
+      patientId,
+      dto,
+    );
+    let savedConversation: ConversationDocument | null = null;
+    let complaintMessage: MessageDocument | undefined;
+
+    try {
+      session.startTransaction();
+
+      savedConversation = await new this.conversationModel(payload).save({
+        session,
+      });
+
+      if (intakeResult?.complaint) {
+        complaintMessage = await new this.messageModel({
+          conversation: savedConversation._id,
+          sender: new Types.ObjectId(patientId),
+          senderRole: SenderRole.PATIENT,
+          content: intakeResult.complaint,
+        }).save({ session });
+      }
+
+      await session.commitTransaction();
+
+      const conversationId = savedConversation._id.toString();
+
+      this.logger.log(
+        `Conversation created: ${conversationId} (channel=${dto.channel}, intake=${dto.intake ? 'yes' : 'no'})`,
+      );
+
+      await this.emitConversationCreated(
+        savedConversation,
+        dto,
+        patientId,
+        complaintMessage,
+      );
+
+      return savedConversation;
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  private async createWithCompensation(
+    patientId: string,
+    dto: CreateConversationDto,
+  ): Promise<ConversationDocument> {
+    const { payload, intakeResult } = this.buildConversationPayload(
+      patientId,
+      dto,
+    );
+    const savedConversation = await new this.conversationModel(payload).save();
+    let complaintMessage: MessageDocument | undefined;
+
+    try {
+      if (intakeResult?.complaint) {
+        complaintMessage = await new this.messageModel({
+          conversation: savedConversation._id,
+          sender: new Types.ObjectId(patientId),
+          senderRole: SenderRole.PATIENT,
+          content: intakeResult.complaint,
+        }).save();
+      }
+    } catch {
+      const conversationId = savedConversation._id.toString();
+      await this.conversationModel.findByIdAndDelete(savedConversation._id);
+      this.logger.error(
+        `Rolled back conversation ${conversationId} after complaint message write failure`,
+      );
+      throw new InternalServerErrorException(
+        'Failed to create conversation intake message. Please retry.',
+      );
+    }
+
+    const conversationId = savedConversation._id.toString();
+
+    this.logger.log(
+      `Conversation created: ${conversationId} (channel=${dto.channel}, intake=${dto.intake ? 'yes' : 'no'})`,
+    );
+
+    await this.emitConversationCreated(
+      savedConversation,
+      dto,
+      patientId,
+      complaintMessage,
+    );
+
+    return savedConversation;
+  }
 
   /**
    * Invalidate caches related to a conversation mutation.
    */
-  private async invalidateConversationCaches(conversationId: string): Promise<void> {
-    await Promise.all([
-      this.cacheService.invalidate(CACHE.CONV(conversationId)),
-      this.cacheService.invalidatePattern(CACHE.QUEUE_PATTERN),
-    ]);
+  private async invalidateConversationCaches(
+    conversationId: string,
+  ): Promise<void> {
+    await this.cacheInvalidationService.invalidateConversation(conversationId);
   }
 
   async create(
     patientId: string,
     dto: CreateConversationDto,
   ): Promise<ConversationDocument> {
-    const conversation = new this.conversationModel({
-      patient: new Types.ObjectId(patientId),
-      channel: dto.channel,
-      status:
-        dto.channel === ConversationChannel.AI
-          ? ConversationStatus.IN_PROGRESS
-          : ConversationStatus.PENDING,
-    });
+    try {
+      return await this.createWithTransaction(patientId, dto);
+    } catch (error: unknown) {
+      if (!this.isTransactionUnsupported(error)) {
+        throw error;
+      }
 
-    const saved = await conversation.save();
-    this.logger.log(
-      `Conversation created: ${saved._id} (channel=${dto.channel})`,
-    );
+      this.logger.warn(
+        'Mongo transactions unavailable; using compensation fallback for conversation intake creation',
+      );
 
-    // Invalidate queue cache (new conversation added)
-    await this.cacheService.invalidatePattern(CACHE.QUEUE_PATTERN);
-
-    // Emit event → WebSocket listener broadcasts to agents
-    this.eventEmitter.emit(
-      SYSTEM_EVENTS.CONVERSATION_CREATED,
-      new ConversationCreatedEvent(
-        saved._id.toString(),
-        dto.channel,
-        saved.toObject(),
-      ),
-    );
-
-    return saved;
+      return this.createWithCompensation(patientId, dto);
+    }
   }
 
   async findById(id: string): Promise<ConversationDocument> {
     // Check cache first
-    const cached = await this.cacheService.get<ConversationDocument>(CACHE.CONV(id));
+    const cached = await this.cacheService.get<ConversationDocument>(
+      CACHE_KEYS.conversation(id),
+    );
     if (cached) return cached;
 
     const conversation = await this.conversationModel
@@ -113,7 +311,11 @@ export class ConversationsService {
     }
 
     // Cache the result
-    await this.cacheService.set(CACHE.CONV(id), conversation.toObject(), CACHE.TTL_CONV);
+    await this.cacheService.set(
+      CACHE_KEYS.conversation(id),
+      conversation.toObject(),
+      CACHE_TTLS.conversation,
+    );
     return conversation;
   }
 
@@ -144,8 +346,11 @@ export class ConversationsService {
     limit = 20,
   ): Promise<PaginatedResult<ConversationDocument>> {
     // Check queue cache first (short TTL for freshness)
-    const cacheKey = CACHE.QUEUE(page, limit);
-    const cached = await this.cacheService.get<PaginatedResult<ConversationDocument>>(cacheKey);
+    const cacheKey = CACHE_KEYS.conversationQueue(page, limit);
+    const cached =
+      await this.cacheService.get<PaginatedResult<ConversationDocument>>(
+        cacheKey,
+      );
     if (cached) return cached;
 
     // Agents only see HUMAN channel conversations (AI conversations are managed by AI)
@@ -179,7 +384,12 @@ export class ConversationsService {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
 
-    await this.cacheService.set(cacheKey, result, CACHE.TTL_QUEUE);
+    await this.cacheService.setTracked(
+      cacheKey,
+      result,
+      CACHE_TTLS.conversationQueue,
+      CACHE_KEYS.conversationQueueNamespace,
+    );
     return result;
   }
 
@@ -198,7 +408,9 @@ export class ConversationsService {
     const updated = await this.conversationModel.findOneAndUpdate(
       {
         _id: conversationId,
-        status: { $in: [ConversationStatus.PENDING, ConversationStatus.ASSIGNED] },
+        status: {
+          $in: [ConversationStatus.PENDING, ConversationStatus.ASSIGNED],
+        },
       },
       {
         $set: {
@@ -236,9 +448,13 @@ export class ConversationsService {
     if (
       existing.agent &&
       existing.agent.toString() !== agentId &&
-      [ConversationStatus.ASSIGNED, ConversationStatus.IN_PROGRESS].includes(existing.status as ConversationStatus)
+      [ConversationStatus.ASSIGNED, ConversationStatus.IN_PROGRESS].includes(
+        existing.status,
+      )
     ) {
-      throw new ForbiddenException('Conversation is already assigned to another agent');
+      throw new ForbiddenException(
+        'Conversation is already assigned to another agent',
+      );
     }
 
     // If already owned by THIS agent → return as-is (idempotent re-click)
@@ -322,7 +538,9 @@ export class ConversationsService {
       if (existing.channel !== ConversationChannel.AI)
         throw new BadRequestException('Only AI conversations can be escalated');
       if (existing.status === ConversationStatus.RESOLVED)
-        throw new BadRequestException('Cannot escalate a resolved conversation');
+        throw new BadRequestException(
+          'Cannot escalate a resolved conversation',
+        );
       throw new BadRequestException('Escalation failed');
     }
 
@@ -371,7 +589,9 @@ export class ConversationsService {
       const existing = await this.conversationModel.findById(conversationId);
       if (!existing) throw new NotFoundException('Conversation not found');
       if (existing.status === ConversationStatus.RESOLVED) return existing;
-      throw new ForbiddenException('Not authorized to resolve this conversation');
+      throw new ForbiddenException(
+        'Not authorized to resolve this conversation',
+      );
     }
 
     // Best-effort counter update
@@ -413,7 +633,9 @@ export class ConversationsService {
       {
         _id: conversationId,
         agent: new Types.ObjectId(currentAgentId),
-        status: { $in: [ConversationStatus.ASSIGNED, ConversationStatus.IN_PROGRESS] },
+        status: {
+          $in: [ConversationStatus.ASSIGNED, ConversationStatus.IN_PROGRESS],
+        },
       },
       {
         $set: {
@@ -437,7 +659,9 @@ export class ConversationsService {
       if (!existing) throw new NotFoundException('Conversation not found');
       if (existing.agent?.toString() !== currentAgentId)
         throw new ForbiddenException('Not assigned to this conversation');
-      throw new BadRequestException('Transfer failed — conversation state changed');
+      throw new BadRequestException(
+        'Transfer failed — conversation state changed',
+      );
     }
 
     // Best-effort counter updates
@@ -478,20 +702,22 @@ export class ConversationsService {
       priority,
       category,
     });
+    await this.invalidateConversationCaches(conversationId);
   }
 
-  async updateSummary(
-    conversationId: string,
-    summary: string,
-  ): Promise<void> {
+  async updateSummary(conversationId: string, summary: string): Promise<void> {
     await this.conversationModel.findByIdAndUpdate(conversationId, { summary });
+    await this.invalidateConversationCaches(conversationId);
   }
 
   async updateLanguage(
     conversationId: string,
     language: string,
   ): Promise<void> {
-    await this.conversationModel.findByIdAndUpdate(conversationId, { language });
+    await this.conversationModel.findByIdAndUpdate(conversationId, {
+      language,
+    });
+    await this.invalidateConversationCaches(conversationId);
   }
 
   /**

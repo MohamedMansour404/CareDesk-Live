@@ -51,6 +51,23 @@ export class UsersService {
     return user;
   }
 
+  async findByIdWithCredentials(id: string): Promise<UserDocument> {
+    const user = await this.userModel.findById(id);
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  async setRefreshTokenHash(
+    userId: string,
+    refreshTokenHash: string | null,
+  ): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, {
+      refreshTokenHash,
+    });
+  }
+
   async findAgents(): Promise<UserDocument[]> {
     return this.userModel
       .find({ role: UserRole.AGENT })

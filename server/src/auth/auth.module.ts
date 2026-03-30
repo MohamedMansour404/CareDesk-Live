@@ -39,9 +39,13 @@ function parseDurationToSeconds(duration: string): number {
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         const expiration = configService.get<string>('jwt.expiration') ?? '7d';
+        const secret = configService.get<string>('jwt.secret');
+        if (!secret) {
+          throw new Error('JWT secret is not configured');
+        }
         const expiresInSeconds = parseDurationToSeconds(expiration);
         return {
-          secret: configService.get<string>('jwt.secret') ?? 'default_secret',
+          secret,
           signOptions: {
             expiresIn: expiresInSeconds,
           },
@@ -52,6 +56,6 @@ function parseDurationToSeconds(duration: string): number {
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule],
+  exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

@@ -16,6 +16,9 @@ import { RolesGuard } from '../common/guards/roles.guard.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { UserRole } from '../common/constants.js';
 import { AiService } from '../ai/ai.service.js';
+import { ConversationAccessGuard } from '../conversations/access/conversation-access.guard.js';
+import { ConversationAccess } from '../conversations/access/conversation-access.decorator.js';
+import { ConversationAccessAction } from '../conversations/access/conversation-access.types.js';
 
 interface AuthenticatedRequest {
   user: { userId: string; role: UserRole };
@@ -31,6 +34,11 @@ export class MessagesController {
   ) {}
 
   @Post()
+  @UseGuards(ConversationAccessGuard)
+  @ConversationAccess({
+    action: ConversationAccessAction.CREATE_MESSAGE,
+    paramName: 'conversationId',
+  })
   async create(
     @Param('conversationId') conversationId: string,
     @Body() dto: CreateMessageDto,
@@ -53,6 +61,12 @@ export class MessagesController {
   }
 
   @Get()
+  @UseGuards(ConversationAccessGuard)
+  @ConversationAccess({
+    action: ConversationAccessAction.VIEW_MESSAGES,
+    paramName: 'conversationId',
+    options: { allowQueueViewForAgents: true },
+  })
   async findAll(
     @Param('conversationId') conversationId: string,
     @Query() pagination: PaginationDto,
@@ -66,7 +80,12 @@ export class MessagesController {
 
   @Get('ai-assist')
   @Roles(UserRole.AGENT)
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, ConversationAccessGuard)
+  @ConversationAccess({
+    action: ConversationAccessAction.VIEW_MESSAGES,
+    paramName: 'conversationId',
+    options: { allowQueueViewForAgents: false },
+  })
   async getAiAssistance(@Param('conversationId') conversationId: string) {
     const messages =
       await this.messagesService.findAllByConversation(conversationId);

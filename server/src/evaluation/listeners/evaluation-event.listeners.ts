@@ -3,7 +3,10 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Message, MessageDocument } from '../../messages/schemas/message.schema.js';
+import {
+  Message,
+  MessageDocument,
+} from '../../messages/schemas/message.schema.js';
 import { EvaluationService } from '../evaluation.service.js';
 import { SenderRole } from '../../common/constants.js';
 import {
@@ -56,10 +59,7 @@ export class EvaluationEventListeners {
       // Emit evaluation event → WebSocket gateway broadcasts
       this.eventEmitter.emit(
         SYSTEM_EVENTS.EVALUATION_CREATED,
-        new EvaluationCreatedEvent(
-          event.conversationId,
-          evaluation.toObject(),
-        ),
+        new EvaluationCreatedEvent(event.conversationId, evaluation.toObject()),
       );
 
       this.logger.log(

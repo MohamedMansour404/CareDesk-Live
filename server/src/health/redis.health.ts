@@ -1,5 +1,9 @@
 import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import {
+  HealthIndicator,
+  HealthIndicatorResult,
+  HealthCheckError,
+} from '@nestjs/terminus';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../config/redis.module.js';
 
@@ -11,9 +15,7 @@ import { REDIS_CLIENT } from '../config/redis.module.js';
 export class RedisHealthIndicator extends HealthIndicator {
   private readonly logger = new Logger(RedisHealthIndicator.name);
 
-  constructor(
-    @Inject(REDIS_CLIENT) @Optional() private redis: Redis | null,
-  ) {
+  constructor(@Inject(REDIS_CLIENT) @Optional() private redis: Redis | null) {
     super();
   }
 
@@ -34,5 +36,23 @@ export class RedisHealthIndicator extends HealthIndicator {
         this.getStatus(key, false, { message: (error as Error).message }),
       );
     }
+  }
+
+  async isReady(key: string): Promise<HealthIndicatorResult> {
+    if (!this.redis) {
+      throw new HealthCheckError(
+        'Redis not configured',
+        this.getStatus(key, false, { message: 'Redis not configured' }),
+      );
+    }
+
+    if (this.redis.status !== 'ready') {
+      throw new HealthCheckError(
+        'Redis is not ready',
+        this.getStatus(key, false, { status: this.redis.status }),
+      );
+    }
+
+    return this.isHealthy(key);
   }
 }

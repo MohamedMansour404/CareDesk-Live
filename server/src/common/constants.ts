@@ -5,6 +5,7 @@
 export enum UserRole {
   PATIENT = 'patient',
   AGENT = 'agent',
+  ADMIN = 'admin',
 }
 
 export enum ConversationChannel {
@@ -24,6 +25,18 @@ export enum MessagePriority {
   HIGH = 'high',
   MEDIUM = 'medium',
   LOW = 'low',
+}
+
+export enum TriageLevel {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  CRITICAL = 'critical',
+}
+
+export enum TriageSource {
+  RULES_V1 = 'rules_v1',
+  AI_V1 = 'ai_v1',
 }
 
 export enum MessageIntent {
@@ -58,6 +71,7 @@ export const PRIORITY_MAP: Record<MessagePriority, number> = {
 // Queue names
 export const QUEUE_NAMES = {
   MESSAGE_PROCESSING: 'message-processing',
+  MESSAGE_DLQ: 'message-dlq',
 };
 
 // WebSocket events
@@ -66,7 +80,11 @@ export const WS_EVENTS = {
   CONVERSATION_ASSIGNED: 'conversation:assigned',
   CONVERSATION_RESOLVED: 'conversation:resolved',
   CONVERSATION_ESCALATED: 'conversation:escalated',
+  CONVERSATION_TRANSFERRED: 'conversation:transferred',
   MESSAGE_NEW: 'message:new',
+  MESSAGE_AI_COMPLETE: 'message:ai:complete',
+  MESSAGE_QUEUE_FAILED: 'message:queue:failed',
+  EVALUATION_NEW: 'evaluation:new',
   AGENT_TYPING: 'agent:typing',
   PATIENT_TYPING: 'patient:typing',
 };

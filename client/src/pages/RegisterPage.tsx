@@ -1,26 +1,25 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { useAuthStore } from '../stores/authStore';
-import '../styles/auth.css';
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { useAuthStore } from "../stores/authStore";
+import "../styles/auth.css";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { register, isLoading } = useAuthStore();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'patient' | 'agent'>('patient');
-  const [error, setError] = useState('');
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     try {
-      await register(name, email, password, role);
-      navigate('/');
+      await register(name, email, password, "patient");
+      navigate("/");
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed');
+      setError(err.response?.data?.message || "Registration failed");
     }
   };
 
@@ -30,7 +29,7 @@ export default function RegisterPage() {
         className="auth-card"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: 'easeOut' }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
       >
         <div className="auth-logo">
           <h1>CareDesk AI</h1>
@@ -83,34 +82,17 @@ export default function RegisterPage() {
             />
           </div>
 
-          <div className="auth-field">
-            <label>I am a</label>
-            <div className="role-toggle">
-              <button
-                type="button"
-                className={role === 'patient' ? 'active' : ''}
-                onClick={() => setRole('patient')}
-              >
-                Patient
-              </button>
-              <button
-                type="button"
-                className={role === 'agent' ? 'active' : ''}
-                onClick={() => setRole('agent')}
-              >
-                Agent
-              </button>
-            </div>
-          </div>
+          <p className="auth-note">
+            New self-serve registrations create a patient account.
+          </p>
 
           <button type="submit" className="auth-btn" disabled={isLoading}>
-            {isLoading ? 'Creating account…' : 'Create Account'}
+            {isLoading ? "Creating account…" : "Create Account"}
           </button>
         </form>
 
         <div className="auth-toggle">
-          Already have an account?{' '}
-          <Link to="/login">Sign in</Link>
+          Already have an account? <Link to="/login">Sign in</Link>
         </div>
       </motion.div>
     </div>

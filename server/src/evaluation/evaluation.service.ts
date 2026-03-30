@@ -1,11 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import {
-  Evaluation,
-  EvaluationDocument,
-} from './schemas/evaluation.schema.js';
+import { Evaluation, EvaluationDocument } from './schemas/evaluation.schema.js';
 import { AiService } from '../ai/ai.service.js';
+
+type AgentAverageRow = {
+  _id: null;
+  averageScore: number;
+  totalEvaluations: number;
+};
 
 @Injectable()
 export class EvaluationService {
@@ -80,7 +83,7 @@ export class EvaluationService {
   async getAgentAverageScore(
     agentId: string,
   ): Promise<{ averageScore: number; totalEvaluations: number }> {
-    const result = await this.evaluationModel.aggregate([
+    const result = await this.evaluationModel.aggregate<AgentAverageRow>([
       { $match: { agent: new Types.ObjectId(agentId) } },
       {
         $group: {

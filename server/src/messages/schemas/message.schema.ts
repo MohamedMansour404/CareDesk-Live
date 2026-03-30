@@ -14,13 +14,13 @@ export type MessageDocument = HydratedDocument<Message>;
 // Sub-document: AI Analysis result
 @Schema({ _id: false })
 export class MessageAnalysis {
-  @Prop({ enum: MessageIntent, required: true })
+  @Prop({ type: String, enum: MessageIntent, required: true })
   intent: MessageIntent;
 
-  @Prop({ enum: MessagePriority, required: true })
+  @Prop({ type: String, enum: MessagePriority, required: true })
   priority: MessagePriority;
 
-  @Prop({ enum: MessageSentiment, required: true })
+  @Prop({ type: String, enum: MessageSentiment, required: true })
   sentiment: MessageSentiment;
 
   @Prop({ required: true, min: 0, max: 1 })
@@ -65,7 +65,7 @@ export class Message {
   @Prop({ type: Types.ObjectId, ref: User.name })
   sender?: Types.ObjectId;
 
-  @Prop({ required: true, enum: SenderRole })
+  @Prop({ type: String, required: true, enum: SenderRole })
   senderRole: SenderRole;
 
   @Prop({ required: true })

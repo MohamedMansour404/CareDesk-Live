@@ -39,9 +39,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = exceptionResponse;
       } else if (typeof exceptionResponse === 'object') {
         const res = exceptionResponse as Record<string, unknown>;
-        message = (res.message as string) || message;
+        if (typeof res.message === 'string') {
+          message = res.message;
+        }
         if (Array.isArray(res.message)) {
-          errors = res.message;
+          errors = res.message.filter(
+            (entry): entry is string => typeof entry === 'string',
+          );
           message = 'Validation failed';
         }
       }

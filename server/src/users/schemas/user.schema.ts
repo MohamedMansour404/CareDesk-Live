@@ -15,7 +15,12 @@ export class User {
   @Prop({ required: true, trim: true })
   name: string;
 
-  @Prop({ required: true, enum: UserRole, default: UserRole.PATIENT })
+  @Prop({
+    type: String,
+    required: true,
+    enum: UserRole,
+    default: UserRole.PATIENT,
+  })
   role: UserRole;
 
   @Prop({ trim: true })
@@ -26,6 +31,9 @@ export class User {
 
   @Prop({ default: 0 })
   activeConversations: number;
+
+  @Prop({ type: String, default: null })
+  refreshTokenHash?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

@@ -11,9 +11,11 @@ import {
   Evaluation,
   EvaluationSchema,
 } from '../evaluation/schemas/evaluation.schema.js';
+import { AuthModule } from '../auth/auth.module.js';
 
 @Module({
   imports: [
+    AuthModule,
     MongooseModule.forFeature([
       { name: Conversation.name, schema: ConversationSchema },
       { name: Message.name, schema: MessageSchema },
