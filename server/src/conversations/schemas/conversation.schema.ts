@@ -12,7 +12,6 @@ import { User } from '../../users/schemas/user.schema.js';
 
 export type ConversationDocument = HydratedDocument<Conversation>;
 
-// ── Embedded sub-schema for handoff history ──
 export class HandoffEntry {
   from: Types.ObjectId;
   to: Types.ObjectId;
@@ -163,8 +162,6 @@ export class Conversation {
 
   @Prop()
   resolvedAt?: Date;
-
-  // ── Phase 2 additions ──
 
   @Prop({ default: 'en' })
   language: string;

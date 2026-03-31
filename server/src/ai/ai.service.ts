@@ -39,11 +39,9 @@ export class AiService {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // 1. MESSAGE ANALYSIS (with caching)
-  // ─────────────────────────────────────────────
+  // Message analysis with cache lookup.
   async analyzeMessage(message: string): Promise<AnalysisResultDto> {
-    // Check cache first
+    // Try cache first.
     const cacheKey = this.hashMessage(message);
     const cached = this.getFromCache(cacheKey);
     if (cached) {
@@ -65,7 +63,7 @@ export class AiService {
           `escalate=${validated.shouldEscalate}`,
       );
 
-      // Cache the result
+      // Cache validated result.
       this.setCache(cacheKey, validated);
       return validated;
     } catch (error: unknown) {
@@ -75,9 +73,7 @@ export class AiService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // 2. AI RESPONSE GENERATION
-  // ─────────────────────────────────────────────
+  // AI response generation.
   async generateResponse(
     message: string,
     analysis: AnalysisResultDto,
@@ -97,13 +93,9 @@ export class AiService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // 2b. COMBINED ANALYZE + RESPOND (Single API call)
-  // ─────────────────────────────────────────────
+  // Combined analyze + respond in one provider call.
   /**
-   * Performs message analysis AND response generation in a single API call.
-   * This halves the API quota usage compared to calling analyzeMessage + generateResponse separately.
-   * Used exclusively for AI-channel conversations.
+   * Runs analysis and reply generation in one API call for AI-channel flows.
    */
   async analyzeAndRespond(
     message: string,
@@ -120,7 +112,7 @@ export class AiService {
         response: string;
       }>(result);
 
-      // Validate and enforce rules on the analysis part
+      // Validate and enforce analysis rules.
       this.validateAnalysisOutput(parsed.analysis);
       const validatedAnalysis = this.enforceAnalysisRules(parsed.analysis);
 
@@ -154,9 +146,7 @@ export class AiService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // 3. AGENT ASSISTANCE
-  // ─────────────────────────────────────────────
+  // Agent assistance.
   async generateAgentAssistance(
     conversationHistory: string,
   ): Promise<AiAssistanceResultDto> {
@@ -179,9 +169,7 @@ export class AiService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // 4. QUALITY EVALUATION
-  // ─────────────────────────────────────────────
+  // Quality evaluation.
   async evaluateResponse(
     patientMessage: string,
     agentResponse: string,
@@ -206,12 +194,10 @@ export class AiService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // PRIVATE HELPERS
-  // ─────────────────────────────────────────────
+  // Private helpers.
 
   /**
-   * Calls the selected AI provider.
+   * Calls providers in order until one succeeds.
    */
   private async callProviderWithRetry(prompt: string): Promise<string> {
     const failures: string[] = [];
@@ -259,10 +245,10 @@ export class AiService {
   }
 
   /**
-   * Enforces safety rules on AI analysis output (code-enforced, not prompt-dependent).
+   * Enforces safety rules on analysis output.
    */
   private enforceAnalysisRules(parsed: AnalysisResultDto): AnalysisResultDto {
-    // Rule 1: Emergency intent MUST be high priority
+    // Emergency intent must always be high priority.
     if (
       parsed.intent === MessageIntent.EMERGENCY &&
       parsed.priority !== MessagePriority.HIGH
@@ -271,7 +257,7 @@ export class AiService {
       parsed.shouldEscalate = true;
     }
 
-    // Rule 2: Low confidence triggers escalation
+    // Low confidence should escalate.
     if (parsed.confidence < ESCALATION_CONFIDENCE_THRESHOLD) {
       parsed.shouldEscalate = true;
     }
@@ -280,8 +266,7 @@ export class AiService {
   }
 
   /**
-   * Validates and auto-corrects AI analysis output.
-   * Instead of throwing (which triggers fallback), we fix invalid values.
+   * Validates and normalizes analysis output.
    */
   private validateAnalysisOutput(parsed: AnalysisResultDto): void {
     const validIntents = Object.values(MessageIntent);
@@ -323,7 +308,7 @@ export class AiService {
   }
 
   /**
-   * Parses JSON from LLM response, stripping markdown code fences if present.
+   * Parses JSON and strips markdown fences when present.
    */
   private parseJsonResponse<T>(text: string): T {
     let cleaned = text.trim();
@@ -339,7 +324,7 @@ export class AiService {
     }
   }
 
-  // ── Cache helpers ──────────────────────────
+  // Cache helpers.
 
   private hashMessage(message: string): string {
     return createHash('sha256')
@@ -360,7 +345,7 @@ export class AiService {
   }
 
   private setCache(key: string, data: AnalysisResultDto): void {
-    // Evict old entries if cache grows beyond 1000
+    // Evict oldest entry when cache grows beyond limit.
     if (this.analysisCache.size > 1000) {
       const firstKey = this.analysisCache.keys().next().value as
         | string
@@ -374,7 +359,7 @@ export class AiService {
     });
   }
 
-  // ── Fallbacks ──────────────────────────────
+  // Fallbacks.
 
   private getFallbackAnalysis(): AnalysisResultDto {
     return {
@@ -391,7 +376,7 @@ export class AiService {
     analysis: AnalysisResultDto,
     message?: string,
   ): string {
-    // Check if this is a quota/rate-limit situation
+    // Detect quota/rate-limit fallback.
     const isQuota = analysis.confidence === 0;
     if (isQuota) {
       return (

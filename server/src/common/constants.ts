@@ -1,7 +1,3 @@
-// ============================================
-// CareDesk AI – System-wide Constants
-// ============================================
-
 export enum UserRole {
   PATIENT = 'patient',
   AGENT = 'agent',
@@ -61,20 +57,18 @@ export enum SenderRole {
   AI = 'ai',
 }
 
-// BullMQ priority mapping (lower number = higher priority)
+// Lower number means higher priority in BullMQ.
 export const PRIORITY_MAP: Record<MessagePriority, number> = {
   [MessagePriority.HIGH]: 1,
   [MessagePriority.MEDIUM]: 5,
   [MessagePriority.LOW]: 10,
 };
 
-// Queue names
 export const QUEUE_NAMES = {
   MESSAGE_PROCESSING: 'message-processing',
   MESSAGE_DLQ: 'message-dlq',
 };
 
-// WebSocket events
 export const WS_EVENTS = {
   CONVERSATION_NEW: 'conversation:new',
   CONVERSATION_ASSIGNED: 'conversation:assigned',
@@ -89,9 +83,7 @@ export const WS_EVENTS = {
   PATIENT_TYPING: 'patient:typing',
 };
 
-// AI Disclaimer
 export const AI_DISCLAIMER =
   'This system provides assistance only and is not a substitute for professional medical advice. If you are experiencing a medical emergency, please call emergency services immediately.';
 
-// Smart escalation thresholds
 export const ESCALATION_CONFIDENCE_THRESHOLD = 0.6;

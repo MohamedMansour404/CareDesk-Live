@@ -21,13 +21,8 @@ import { QueueService } from '../../queue/queue.service.js';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 /**
- * Handles message lifecycle events:
- * - AI analysis (async, after message saved)
- * - Queue routing (human channel)
- * - AI response generation (AI channel)
- *
- * IMPORTANT: Only processes PATIENT messages (senderRole === 'patient').
- * AI messages are NEVER re-processed to prevent infinite loops.
+ * Handles async processing for newly created patient messages.
+ * AI-generated messages are ignored to prevent loops.
  */
 @Injectable()
 export class MessageEventListeners {
@@ -51,12 +46,12 @@ export class MessageEventListeners {
     messageData: unknown;
     correlationId?: string;
   }) {
-    // ── CRITICAL GUARD: Do NOT process AI-generated messages ──────────────
+    // Ignore AI-generated messages to prevent loops.
     if (event.senderRole !== SenderRole.PATIENT) {
       return;
     }
 
-    // Build log context for consistent tracing
+    // Shared log context for this message flow.
     const ctx: LogContext = {
       correlationId: event.correlationId,
       conversationId: event.conversationId,

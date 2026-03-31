@@ -56,7 +56,7 @@ export class EvaluationEventListeners {
         event.content,
       );
 
-      // Emit evaluation event → WebSocket gateway broadcasts
+      // Emit evaluation event for WebSocket broadcast.
       this.eventEmitter.emit(
         SYSTEM_EVENTS.EVALUATION_CREATED,
         new EvaluationCreatedEvent(event.conversationId, evaluation.toObject()),

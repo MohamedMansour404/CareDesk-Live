@@ -1,9 +1,6 @@
 import Redis, { RedisOptions } from 'ioredis';
 
-/**
- * Parse a Redis URL into base connection options with TLS auto-detection.
- * This is the foundation — callers add their own behavioural overrides.
- */
+/** Parse Redis URL into ioredis options. */
 function parseRedisUrl(redisUrl: string): RedisOptions {
   const url = new URL(redisUrl);
   const useTls = url.protocol === 'rediss:';
@@ -26,10 +23,6 @@ function parseRedisUrl(redisUrl: string): RedisOptions {
   return options;
 }
 
-// ─────────────────────────────────────────────────
-// A.  General-purpose Redis (Analytics, Health, etc.)
-// ─────────────────────────────────────────────────
-
 export function buildRedisOptions(redisUrl: string): RedisOptions {
   return {
     ...parseRedisUrl(redisUrl),
@@ -50,17 +43,11 @@ export function createRedisClient(
   return new Redis({ ...options, ...overrides });
 }
 
-// ─────────────────────────────────────────────────
-// B.  Bull-safe Redis config (STRICT)
-//     Bull creates its own ioredis clients and REQUIRES:
-//       - maxRetriesPerRequest = null
-//       - enableReadyCheck = false  (or omitted)
-// ─────────────────────────────────────────────────
-
+// Bull requires this retry/ready-check behavior on its own clients.
 export function buildBullRedisOptions(redisUrl: string): RedisOptions {
   return {
     ...parseRedisUrl(redisUrl),
-    maxRetriesPerRequest: null, // Bull requirement
-    enableReadyCheck: false, // Bull requirement
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
   };
 }

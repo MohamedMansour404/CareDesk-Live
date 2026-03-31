@@ -1,9 +1,6 @@
 import { Logger } from '@nestjs/common';
 
-/**
- * Structured log metadata — consistent across all modules.
- * All fields are optional; include what's available in your context.
- */
+/** Structured metadata for contextual logs. */
 export interface LogContext {
   correlationId?: string;
   conversationId?: string;
@@ -15,13 +12,7 @@ export interface LogContext {
   [key: string]: unknown;
 }
 
-/**
- * Format log metadata into a compact, parseable suffix string.
- *
- * Output: `[cid=abc123 conv=xyz msg=456 user=u1]`
- *
- * This keeps logs human-readable while being grep-friendly for production debugging.
- */
+/** Format context values into a compact log suffix. */
 function formatContext(ctx: LogContext): string {
   const parts: string[] = [];
 
@@ -48,7 +39,7 @@ function formatContext(ctx: LogContext): string {
   if (ctx.channel) parts.push(`ch=${ctx.channel}`);
   if (ctx.duration !== undefined) parts.push(`${ctx.duration}ms`);
 
-  // Include any extra keys
+  // Include custom keys that are not part of the standard context fields.
   for (const [key, value] of Object.entries(ctx)) {
     if (
       ![
@@ -69,17 +60,7 @@ function formatContext(ctx: LogContext): string {
   return parts.length > 0 ? ` [${parts.join(' ')}]` : '';
 }
 
-/**
- * Log with structured context. Uses NestJS Logger under the hood.
- *
- * @example
- * logWithContext(this.logger, 'info', 'Message processed', {
- *   correlationId: 'abc-123',
- *   conversationId: '507f1f77',
- *   duration: 342,
- * });
- * // Output: [ConversationsService] Message processed [cid=abc-123 conv=7f1f77 342ms]
- */
+/** Log with contextual suffix using Nest Logger methods. */
 export function logWithContext(
   logger: Logger,
   level: 'log' | 'warn' | 'error' | 'debug',

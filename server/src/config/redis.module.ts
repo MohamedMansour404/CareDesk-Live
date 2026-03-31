@@ -10,7 +10,7 @@ import { RedisLifecycleService } from './redis.lifecycle.js';
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
 /**
- * Shared Redis module — provides a single managed ioredis client
+ * Shared Redis module provides one managed ioredis client
  * for analytics caching, health checks, and other non-Bull uses.
  * Bull has its own connection with different requirements (maxRetriesPerRequest: null).
  */
@@ -28,19 +28,19 @@ export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
           ...buildRedisOptions(redisUrl),
           lazyConnect: true,
           retryStrategy: (times: number) => {
-            if (times > 5) return null; // stop after 5 retries
+            if (times > 5) return null; // Stop after 5 retries.
             return Math.min(times * 500, 3000);
           },
         });
 
         client.on('error', (err) => {
-          // Suppress to prevent crash — consumers handle gracefully
+          // Suppress to prevent crashes; consumers handle this gracefully.
           if (process.env.LOG_LEVEL === 'debug') {
             console.debug(`[SharedRedis] ${err.message}`);
           }
         });
 
-        // Connect lazily — don't block app startup
+        // Connect lazily so startup is not blocked.
         client.connect().catch(() => {});
 
         return client;

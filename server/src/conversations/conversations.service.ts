@@ -266,9 +266,7 @@ export class ConversationsService {
     return savedConversation;
   }
 
-  /**
-   * Invalidate caches related to a conversation mutation.
-   */
+  /** Invalidates cache entries touched by conversation mutations. */
   private async invalidateConversationCaches(
     conversationId: string,
   ): Promise<void> {
@@ -295,7 +293,6 @@ export class ConversationsService {
   }
 
   async findById(id: string): Promise<ConversationDocument> {
-    // Check cache first
     const cached = await this.cacheService.get<ConversationDocument>(
       CACHE_KEYS.conversation(id),
     );
@@ -310,7 +307,6 @@ export class ConversationsService {
       throw new NotFoundException('Conversation not found');
     }
 
-    // Cache the result
     await this.cacheService.set(
       CACHE_KEYS.conversation(id),
       conversation.toObject(),
@@ -345,7 +341,6 @@ export class ConversationsService {
     page = 1,
     limit = 20,
   ): Promise<PaginatedResult<ConversationDocument>> {
-    // Check queue cache first (short TTL for freshness)
     const cacheKey = CACHE_KEYS.conversationQueue(page, limit);
     const cached =
       await this.cacheService.get<PaginatedResult<ConversationDocument>>(
@@ -353,8 +348,7 @@ export class ConversationsService {
       );
     if (cached) return cached;
 
-    // Agents only see HUMAN channel conversations (AI conversations are managed by AI)
-    // Include all statuses so the frontend can filter by tab (Queue/Mine/Resolved)
+    // Include all operational states so queue/mine/resolved can be filtered client-side.
     const filter = {
       channel: ConversationChannel.HUMAN,
       status: {
@@ -393,14 +387,7 @@ export class ConversationsService {
     return result;
   }
 
-  // ─────────────────────────────────────────────
-  // TRANSACTIONAL OPERATIONS
-  // ─────────────────────────────────────────────
-
-  /**
-   * Marks a conversation as IN_PROGRESS when an agent first replies.
-   * Safe to call multiple times — only transitions from PENDING/ASSIGNED.
-   */
+  /** Moves pending/assigned conversations to in_progress after first agent reply. */
   async markAsInProgress(
     conversationId: string,
     agentId: string,
@@ -423,7 +410,6 @@ export class ConversationsService {
 
     if (updated) {
       await this.invalidateConversationCaches(conversationId);
-      // Broadcast status change so both parties see it in real-time
       this.eventEmitter.emit(
         SYSTEM_EVENTS.CONVERSATION_ASSIGNED,
         new ConversationAssignedEvent(conversationId, agentId),
@@ -438,13 +424,11 @@ export class ConversationsService {
     conversationId: string,
     agentId: string,
   ): Promise<ConversationDocument> {
-    // First, check current state to provide meaningful errors
     const existing = await this.conversationModel.findById(conversationId);
     if (!existing) {
       throw new NotFoundException('Conversation not found');
     }
 
-    // If already owned by a DIFFERENT agent → block (locking)
     if (
       existing.agent &&
       existing.agent.toString() !== agentId &&
@@ -457,12 +441,10 @@ export class ConversationsService {
       );
     }
 
-    // If already owned by THIS agent → return as-is (idempotent re-click)
     if (existing.agent?.toString() === agentId) {
       return existing.populate('patient', 'name email');
     }
 
-    // Atomic update — only PENDING conversations can be picked up
     const conversation = await this.conversationModel.findOneAndUpdate(
       {
         _id: conversationId,
@@ -483,7 +465,7 @@ export class ConversationsService {
       );
     }
 
-    // Best-effort counter update (non-critical)
+    // Counter updates should not block assignment success.
     await this.usersService
       .incrementActiveConversations(agentId, 1)
       .catch((err: Error) =>
@@ -492,7 +474,6 @@ export class ConversationsService {
 
     await this.invalidateConversationCaches(conversationId);
 
-    // Emit event → WebSocket broadcasts to all agents
     this.eventEmitter.emit(
       SYSTEM_EVENTS.CONVERSATION_ASSIGNED,
       new ConversationAssignedEvent(conversationId, agentId),
@@ -504,15 +485,11 @@ export class ConversationsService {
     return conversation;
   }
 
-  /**
-   * Escalate an AI conversation to human support.
-   * Changes channel AI → HUMAN, status → PENDING so it enters the agent queue.
-   */
+  /** Escalates an AI conversation into the human queue. */
   async escalateToHuman(
     conversationId: string,
     patientId: string,
   ): Promise<ConversationDocument> {
-    // Atomic update — filter enforces all business rules at the DB level
     const conversation = await this.conversationModel.findOneAndUpdate(
       {
         _id: conversationId,
@@ -530,7 +507,6 @@ export class ConversationsService {
     );
 
     if (!conversation) {
-      // Determine specific error
       const existing = await this.conversationModel.findById(conversationId);
       if (!existing) throw new NotFoundException('Conversation not found');
       if (existing.patient.toString() !== patientId)
@@ -560,7 +536,6 @@ export class ConversationsService {
     userId: string,
     userRole: UserRole,
   ): Promise<ConversationDocument> {
-    // Build ownership filter based on role
     const ownershipFilter: Record<string, unknown> =
       userRole === UserRole.PATIENT
         ? { patient: new Types.ObjectId(userId) }
@@ -568,7 +543,6 @@ export class ConversationsService {
           ? { agent: new Types.ObjectId(userId) }
           : {};
 
-    // Atomic resolve — prevents race where two users resolve simultaneously
     const conversation = await this.conversationModel.findOneAndUpdate(
       {
         _id: conversationId,
@@ -585,7 +559,6 @@ export class ConversationsService {
     );
 
     if (!conversation) {
-      // Check if already resolved (idempotent)
       const existing = await this.conversationModel.findById(conversationId);
       if (!existing) throw new NotFoundException('Conversation not found');
       if (existing.status === ConversationStatus.RESOLVED) return existing;
@@ -594,7 +567,7 @@ export class ConversationsService {
       );
     }
 
-    // Best-effort counter update
+    // Counter updates should not block resolve success.
     if (conversation.agent) {
       await this.usersService
         .incrementActiveConversations(conversation.agent.toString(), -1)
@@ -628,7 +601,6 @@ export class ConversationsService {
       throw new NotFoundException('Target agent not found');
     }
 
-    // Atomic transfer — ensures only the owning agent can transfer
     const conversation = await this.conversationModel.findOneAndUpdate(
       {
         _id: conversationId,
@@ -664,7 +636,7 @@ export class ConversationsService {
       );
     }
 
-    // Best-effort counter updates
+    // Counter updates should not block transfer success.
     await this.usersService
       .incrementActiveConversations(currentAgentId, -1)
       .catch((err: Error) =>
@@ -720,9 +692,7 @@ export class ConversationsService {
     await this.invalidateConversationCaches(conversationId);
   }
 
-  /**
-   * Check if a user is a participant in a conversation.
-   */
+  /** Returns true if the user is the patient or assigned agent. */
   async isParticipant(
     conversationId: string,
     userId: string,

@@ -158,9 +158,7 @@ export class AnalyticsService {
     return result;
   }
 
-  // ─────────────────────────────────────────────
-  // CACHE HELPERS
-  // ─────────────────────────────────────────────
+  // Cache helpers
 
   private async getCache<T>(key: string): Promise<T | null> {
     const value = await this.cacheService.get<T>(key);
@@ -179,9 +177,7 @@ export class AnalyticsService {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // PRIVATE HELPERS
-  // ─────────────────────────────────────────────
+  // Private helpers
 
   private async getDistribution(
     model: Model<unknown>,

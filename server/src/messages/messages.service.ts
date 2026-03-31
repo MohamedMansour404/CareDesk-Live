@@ -37,12 +37,7 @@ export class MessagesService {
     private cacheService: CacheService,
   ) {}
 
-  /**
-   * Patient message flow (async AI):
-   * 1. Save patient message
-   * 2. Return immediately
-   * 3. Emit event → AI processing happens in background
-   */
+  /** Persists a patient message and emits async processing events. */
   async createPatientMessage(
     conversationId: string,
     senderId: string,
@@ -53,7 +48,6 @@ export class MessagesService {
     const conversation =
       await this.conversationsService.findById(conversationId);
 
-    // Guard: prevent messages to resolved conversations
     if (conversation.status === ConversationStatus.RESOLVED) {
       throw new BadRequestException(
         'Cannot send messages to a resolved conversation',
@@ -66,7 +60,6 @@ export class MessagesService {
       );
     }
 
-    // 1. Save the patient's message immediately
     const patientMessage = await this.saveMessage({
       conversation: conversationId,
       sender: senderId,
@@ -78,7 +71,6 @@ export class MessagesService {
       conversationId,
     );
 
-    // 2. Emit event for async processing (AI analysis, queue, WebSocket)
     this.eventEmitter.emit(
       SYSTEM_EVENTS.MESSAGE_CREATED,
       new MessageCreatedEvent(
@@ -104,7 +96,6 @@ export class MessagesService {
       },
     );
 
-    // 3. Return immediately — AI results delivered via WebSocket
     return {
       message: patientMessage,
       status: 'processing',
@@ -112,16 +103,13 @@ export class MessagesService {
     };
   }
 
-  /**
-   * Agent reply — save and emit event for auto-evaluation.
-   */
+  /** Persists an agent reply and emits evaluation/realtime events. */
   async createAgentMessage(
     conversationId: string,
     agentId: string,
     dto: CreateMessageDto,
     correlationId?: string,
   ) {
-    // Guard: check conversation state before any mutations
     const conversation =
       await this.conversationsService.findById(conversationId);
 
@@ -131,14 +119,12 @@ export class MessagesService {
       );
     }
 
-    // Ownership guard: only the assigned agent can reply
     if (conversation.agent && conversation.agent._id?.toString() !== agentId) {
       throw new ForbiddenException(
         'This conversation is assigned to another agent',
       );
     }
 
-    // Transition pending/assigned → in_progress on first agent reply (idempotent)
     await this.conversationsService.markAsInProgress(conversationId, agentId);
 
     const agentMessage = await this.saveMessage({
@@ -152,7 +138,6 @@ export class MessagesService {
       conversationId,
     );
 
-    // Emit event — evaluation + WebSocket handled by listeners
     this.eventEmitter.emit(
       SYSTEM_EVENTS.MESSAGE_AGENT_REPLIED,
       new AgentRepliedEvent(
@@ -175,9 +160,7 @@ export class MessagesService {
     return agentMessage;
   }
 
-  /**
-   * Get paginated messages for a conversation.
-   */
+  /** Returns paginated conversation messages. */
   async findByConversation(
     conversationId: string,
     page = 1,
@@ -224,9 +207,7 @@ export class MessagesService {
     return result;
   }
 
-  /**
-   * Find messages by conversation (unpaginated, for internal use).
-   */
+  /** Returns all conversation messages (internal use). */
   async findAllByConversation(
     conversationId: string,
   ): Promise<MessageDocument[]> {
@@ -238,9 +219,7 @@ export class MessagesService {
       .exec();
   }
 
-  /**
-   * Find last patient message before a given message ID.
-   */
+  /** Returns the latest patient message before a given message id. */
   async findLastPatientMessage(
     conversationId: string,
     beforeMessageId: string,
@@ -255,9 +234,7 @@ export class MessagesService {
       .exec();
   }
 
-  /**
-   * Update a message with AI analysis result.
-   */
+  /** Updates message analysis payload. */
   async updateAnalysis(
     messageId: string,
     analysis: Record<string, unknown>,
@@ -274,9 +251,7 @@ export class MessagesService {
     }
   }
 
-  /**
-   * Save an AI response message.
-   */
+  /** Saves an AI response message. */
   async saveAiResponse(
     conversationId: string,
     content: string,

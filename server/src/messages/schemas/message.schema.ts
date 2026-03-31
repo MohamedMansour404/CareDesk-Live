@@ -11,7 +11,7 @@ import { User } from '../../users/schemas/user.schema.js';
 
 export type MessageDocument = HydratedDocument<Message>;
 
-// Sub-document: AI Analysis result
+// AI analysis payload.
 @Schema({ _id: false })
 export class MessageAnalysis {
   @Prop({ type: String, enum: MessageIntent, required: true })
@@ -36,7 +36,7 @@ export class MessageAnalysis {
 export const MessageAnalysisSchema =
   SchemaFactory.createForClass(MessageAnalysis);
 
-// Sub-document: AI suggestion for agents
+// AI suggestion payload.
 @Schema({ _id: false })
 export class AiSuggestion {
   @Prop()
@@ -51,7 +51,7 @@ export class AiSuggestion {
 
 export const AiSuggestionSchema = SchemaFactory.createForClass(AiSuggestion);
 
-// Main Message schema
+// Message document.
 @Schema({ timestamps: true })
 export class Message {
   @Prop({

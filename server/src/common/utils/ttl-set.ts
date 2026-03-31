@@ -1,31 +1,22 @@
 /**
- * A bounded, TTL-aware Set for tracking in-progress items.
- *
- * Prevents:
- * - Memory leaks from items stuck after failed cleanup
- * - Unbounded growth under sustained load
- *
- * Each entry auto-expires after `ttlMs` and the total size is capped.
+ * Bounded TTL set used to track in-flight items.
  */
 export class TtlSet {
-  private readonly entries = new Map<string, number>(); // key → expiry timestamp
+  private readonly entries = new Map<string, number>();
 
   constructor(
     private readonly maxSize: number = 1000,
-    private readonly ttlMs: number = 60_000, // 60s default
+    private readonly ttlMs: number = 60_000,
   ) {}
 
-  /**
-   * Add an item. Returns false if it already exists (not expired).
-   */
+  /** Adds an item unless it already exists and is not expired. */
   add(key: string): boolean {
     this.purgeExpired();
 
     if (this.entries.has(key)) {
-      return false; // Already being processed
+      return false;
     }
 
-    // If at capacity, reject (caller should handle gracefully)
     if (this.entries.size >= this.maxSize) {
       return false;
     }
@@ -34,9 +25,7 @@ export class TtlSet {
     return true;
   }
 
-  /**
-   * Check if an item is currently tracked (and not expired).
-   */
+  /** Returns true when the key exists and is not expired. */
   has(key: string): boolean {
     const expiry = this.entries.get(key);
     if (!expiry) return false;
@@ -47,23 +36,17 @@ export class TtlSet {
     return true;
   }
 
-  /**
-   * Remove an item (normal completion).
-   */
+  /** Removes an item. */
   delete(key: string): void {
     this.entries.delete(key);
   }
 
-  /**
-   * Current number of tracked items.
-   */
+  /** Current tracked size. */
   get size(): number {
     return this.entries.size;
   }
 
-  /**
-   * Remove all expired entries.
-   */
+  /** Purges expired entries. */
   private purgeExpired(): void {
     const now = Date.now();
     for (const [key, expiry] of this.entries) {

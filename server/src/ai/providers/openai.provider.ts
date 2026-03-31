@@ -38,7 +38,7 @@ export class OpenAiProvider extends AiProvider implements OnModuleInit {
       throw new Error('OpenAI client not initialized – missing API key');
     }
 
-    // Retry with exponential backoff for rate-limit errors
+    // Retry with increasing delay for rate-limit errors.
     const maxAttempts = 3;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -81,7 +81,7 @@ export class OpenAiProvider extends AiProvider implements OnModuleInit {
           throw quotaError;
         }
 
-        // Non-rate-limit error — rethrow
+        // Rethrow non-rate-limit errors.
         throw error;
       }
     }
@@ -97,7 +97,7 @@ export class OpenAiProvider extends AiProvider implements OnModuleInit {
     ) {
       return true;
     }
-    // Check OpenAI error status
+    // Check OpenAI error status code.
     if (error && typeof error === 'object' && 'status' in error) {
       return (error as { status: number }).status === 429;
     }

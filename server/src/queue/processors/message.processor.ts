@@ -150,7 +150,7 @@ export class MessageProcessor {
       ctx,
     );
 
-    // If all retries exhausted → DLQ candidate
+    // Move to DLQ after all retries are exhausted.
     if (attempts >= maxAttempts) {
       logWithContext(
         this.logger,

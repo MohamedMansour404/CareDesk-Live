@@ -1,12 +1,8 @@
-// ============================================
-// CareDesk AI – Optimized Prompt Templates
-// Designed for free-tier API quota efficiency
-// ============================================
+// Prompt templates for CareDesk AI.
 
 export const PROMPTS = {
   /**
-   * Analyzes a patient message for intent, priority, sentiment.
-   * Compact prompt to minimize token usage.
+   * Patient message analysis prompt.
    */
   MESSAGE_ANALYSIS: `You are CareDesk AI, a healthcare triage system. Analyze this patient message.
 
@@ -27,8 +23,7 @@ Rules:
 - confidence < 0.5 → escalate`,
 
   /**
-   * Generates an AI response to the patient (AI support channel).
-   * Compact prompt for token efficiency.
+   * AI support response prompt.
    */
   AI_RESPONSE: `You are CareDesk AI, a warm and trustworthy healthcare support assistant.
 
@@ -46,7 +41,7 @@ Rules:
 8. End with: "📋 This is general guidance only and is not a substitute for professional medical advice."`,
 
   /**
-   * Agent assistance — helps human agents draft responses.
+   * Agent assistance prompt.
    */
   AGENT_ASSISTANCE: `You are an AI co-pilot helping a healthcare support agent respond to patients.
 
@@ -63,7 +58,7 @@ Rules:
 - Address patient's concerns directly`,
 
   /**
-   * Quality evaluation of agent responses.
+   * Agent response quality evaluation prompt.
    */
   QUALITY_EVALUATION: `Evaluate this agent response quality. Return ONLY valid JSON.
 
@@ -75,9 +70,7 @@ Agent: "{{agentResponse}}"
 Scoring: Accuracy(0-3) + Empathy(0-2) + Completeness(0-2) + Safety(0-2) + Professionalism(0-1) = /10`,
 
   /**
-   * COMBINED: Analyze + Respond in a SINGLE API call.
-   * Used for AI-channel conversations to minimize API quota usage.
-   * This halves the number of API calls per patient message.
+   * Combined analysis and response prompt for AI-channel conversations.
    */
   COMBINED_ANALYZE_AND_RESPOND: `You are CareDesk AI, a warm healthcare support assistant.
 

@@ -11,7 +11,7 @@ import { ShutdownOrchestratorService } from './common/services/shutdown-orchestr
 import { SecurityModule } from './security/security.module.js';
 import { GlobalRateLimitMiddleware } from './security/global-rate-limit.middleware.js';
 
-// Feature modules
+// Feature modules.
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { AiModule } from './ai/ai.module.js';
@@ -25,24 +25,20 @@ import { HealthModule } from './health/health.module.js';
 
 @Module({
   imports: [
-    // ── Configuration ──────────────────────────
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
       envFilePath: '.env',
     }),
 
-    // ── Event Emitter (global) ─────────────────
     EventEmitterModule.forRoot({
       wildcard: false,
       maxListeners: 20,
     }),
 
-    // ── Shared Redis client (global) ──────────
     RedisModule,
     SecurityModule,
 
-    // ── MongoDB (with pool config) ─────────────
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({
@@ -55,7 +51,6 @@ import { HealthModule } from './health/health.module.js';
       inject: [ConfigService],
     }),
 
-    // ── Redis / BullMQ ─────────────────────────
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
@@ -66,7 +61,6 @@ import { HealthModule } from './health/health.module.js';
       inject: [ConfigService],
     }),
 
-    // ── Feature Modules ────────────────────────
     AuthModule,
     UsersModule,
     AiModule,
@@ -82,7 +76,7 @@ import { HealthModule } from './health/health.module.js';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // Apply correlation middleware to ALL routes
+    // Apply correlation and rate limiting to all routes.
     consumer
       .apply(CorrelationMiddleware, GlobalRateLimitMiddleware)
       .forRoutes('*');

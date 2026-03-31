@@ -1,7 +1,3 @@
-// ============================================
-// CareDesk AI – Internal Event Definitions
-// ============================================
-
 export const SYSTEM_EVENTS = {
   MESSAGE_CREATED: 'message.created',
   MESSAGE_AGENT_REPLIED: 'message.agent.replied',
@@ -14,8 +10,6 @@ export const SYSTEM_EVENTS = {
   CONVERSATION_ESCALATED: 'conversation.escalated',
   EVALUATION_CREATED: 'evaluation.created',
 } as const;
-
-// ── Event Payloads ──────────────────────────
 
 export class MessageCreatedEvent {
   constructor(

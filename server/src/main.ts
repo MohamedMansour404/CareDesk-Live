@@ -27,10 +27,8 @@ async function bootstrap() {
     httpServer.set('trust proxy', trustProxy);
   }
 
-  // ── Graceful Shutdown ───────────────────────
   app.enableShutdownHooks();
 
-  // ── Global Pipes ───────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -40,16 +38,13 @@ async function bootstrap() {
     }),
   );
 
-  // ── Global Filters ─────────────────────────
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // ── Global Interceptors ────────────────────
   app.useGlobalInterceptors(
     new LoggingInterceptor(),
     new TransformInterceptor(),
   );
 
-  // ── CORS (supports multiple origins) ───────
   app.enableCors({
     origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
