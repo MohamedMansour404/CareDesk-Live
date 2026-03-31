@@ -6,6 +6,7 @@ import { AuthService } from './auth.service.js';
 import { AuthController } from './auth.controller.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 import { UsersModule } from '../users/users.module.js';
+import { AdminBootstrapService } from './admin-bootstrap.service.js';
 
 /**
  * Converts duration strings like '7d', '24h', '30m' to seconds.
@@ -55,7 +56,7 @@ function parseDurationToSeconds(duration: string): number {
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, AdminBootstrapService],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

@@ -75,6 +75,10 @@ export class UsersService {
       .exec();
   }
 
+  async countByRole(role: UserRole): Promise<number> {
+    return this.userModel.countDocuments({ role });
+  }
+
   async setOnlineStatus(
     userId: string,
     isOnline: boolean,

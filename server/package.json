@@ -7,6 +7,8 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "create:specialist": "npm run build --silent && node dist/scripts/create-specialist.js",
+    "db:reset": "npm run build --silent && node dist/scripts/reset-database.js",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
