@@ -2,6 +2,8 @@
    CareDesk AI — Design System
    ============================================ */
 
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
+
 /* ── CSS Reset ─────────────────────────── */
 *,
 *::before,
@@ -19,7 +21,7 @@ html {
 
 body {
   font-family:
-    "Inter",
+    "Plus Jakarta Sans",
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
@@ -73,48 +75,48 @@ img {
 /* ── Design Tokens ────────────────────── */
 :root {
   /* Backgrounds */
-  --bg-primary: #0b0f1a;
-  --bg-secondary: #111a2b;
-  --bg-tertiary: #1b2440;
-  --bg-glass: rgba(255, 255, 255, 0.04);
-  --bg-glass-hover: rgba(255, 255, 255, 0.08);
-  --bg-elevated: rgba(17, 26, 43, 0.95);
+  --bg-primary: #090f1d;
+  --bg-secondary: #0f172b;
+  --bg-tertiary: #1b2742;
+  --bg-glass: rgba(137, 164, 225, 0.08);
+  --bg-glass-hover: rgba(137, 164, 225, 0.14);
+  --bg-elevated: rgba(15, 23, 43, 0.92);
 
   /* Borders */
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-default: rgba(255, 255, 255, 0.13);
-  --border-focus: rgba(79, 143, 247, 0.52);
+  --border-subtle: rgba(140, 166, 224, 0.18);
+  --border-default: rgba(140, 166, 224, 0.3);
+  --border-focus: rgba(109, 139, 255, 0.52);
 
   /* Accent Gradients */
-  --accent-primary: linear-gradient(135deg, #4f8ff7, #9b6efc);
-  --accent-secondary: linear-gradient(135deg, #12c2e9, #4f8ff7);
-  --accent-success: linear-gradient(135deg, #22c68a, #4ddaa3);
-  --accent-warning: linear-gradient(135deg, #f4b43a, #f8ca61);
-  --accent-danger: linear-gradient(135deg, #f36666, #fa8a8a);
-  --accent-ai: linear-gradient(135deg, #9b6efc, #f062b8);
+  --accent-primary: linear-gradient(135deg, #5f7cff, #4cb8ff);
+  --accent-secondary: linear-gradient(135deg, #3ea2ff, #3bd0ad);
+  --accent-success: linear-gradient(135deg, #22bf89, #5de0b3);
+  --accent-warning: linear-gradient(135deg, #e9b24f, #f5d07a);
+  --accent-danger: linear-gradient(135deg, #eb6f7f, #f09aa6);
+  --accent-ai: linear-gradient(135deg, #28889b, #355fae);
 
   /* Flat Colors */
-  --blue: #4f8ff7;
-  --violet: #9b6efc;
-  --cyan: #12c2e9;
-  --teal: #12c2e9;
-  --emerald: #22c68a;
-  --amber: #f4b43a;
-  --red: #f36666;
-  --pink: #f062b8;
+  --blue: #72a8ff;
+  --violet: #91a4ff;
+  --cyan: #61ccff;
+  --teal: #59d4bf;
+  --emerald: #53d8a9;
+  --amber: #f0bf63;
+  --red: #ef8893;
+  --pink: #d89bf2;
 
   /* Text */
-  --text-primary: #f1f5f9;
-  --text-secondary: #a3b3cc;
-  --text-muted: #60708a;
-  --text-inverse: #0b0f1a;
+  --text-primary: #e8efff;
+  --text-secondary: #b7c5e5;
+  --text-muted: #7f93ba;
+  --text-inverse: #091120;
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow-blue: 0 0 20px rgba(79, 143, 247, 0.22);
-  --shadow-glow-violet: 0 0 20px rgba(155, 110, 252, 0.22);
+  --shadow-sm: 0 2px 8px rgba(2, 8, 22, 0.34);
+  --shadow-md: 0 14px 26px rgba(2, 8, 22, 0.4);
+  --shadow-lg: 0 30px 60px rgba(2, 8, 22, 0.54);
+  --shadow-glow-blue: 0 0 20px rgba(105, 138, 255, 0.28);
+  --shadow-glow-violet: 0 0 20px rgba(126, 184, 255, 0.22);
 
   /* Spacing */
   --space-1: 4px;
