@@ -45,7 +45,7 @@ interface Conversation {
 // ── Role-aware tab definitions ──────────────────────────────────
 const AGENT_TABS = [
   { label: "Queue", value: "queue" },
-  { label: "Mine", value: "mine" },
+  { label: "Assigned", value: "mine" },
   { label: "Resolved", value: "resolved" },
 ];
 
@@ -203,11 +203,18 @@ export default function ConversationList() {
     return conversations.filter((c) => c.status !== "resolved");
   }, [conversations, statusFilter, isAgent, userId]);
 
+  const sortedFiltered = useMemo(() => {
+    return [...filtered].sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    );
+  }, [filtered]);
+
   const visuallyFiltered = useMemo(() => {
     const term = localSearch.toLowerCase().trim();
-    if (!term) return filtered;
+    if (!term) return sortedFiltered;
 
-    return filtered.filter((conv) => {
+    return sortedFiltered.filter((conv) => {
       const patient = conv.patient?.name?.toLowerCase() ?? "";
       const agent = conv.agent?.name?.toLowerCase() ?? "";
       const complaint =
@@ -220,7 +227,16 @@ export default function ConversationList() {
         complaint.includes(term)
       );
     });
-  }, [filtered, localSearch]);
+  }, [sortedFiltered, localSearch]);
+
+  const pendingAging = useMemo(() => {
+    const now = Date.now();
+    return conversations.filter((c) => {
+      if (c.status !== "pending") return false;
+      const ageMinutes = (now - new Date(c.createdAt).getTime()) / 60000;
+      return ageMinutes >= 15;
+    }).length;
+  }, [conversations]);
 
   // ── Handle conversation click ─────────────────────────────────
   const handleConversationClick = (conv: Conversation) => {
@@ -253,7 +269,7 @@ export default function ConversationList() {
 
   const getStatusLabel = (conv: Conversation) => {
     if (isAgent && conv.agent && conv.agent._id !== userId) {
-      return `Assigned to ${conv.agent.name || "Agent"}`;
+      return `Assigned to ${conv.agent.name || "Care Specialist"}`;
     }
     return conv.status.replace("_", " ");
   };
@@ -269,10 +285,24 @@ export default function ConversationList() {
             <span>DLQ: {dlqSummary?.total ?? 0}</span>
           </div>
         )}
+
+        {isAgent && (
+          <div className="conv-kpi-row">
+            <div className="conv-kpi-card">
+              <span>Needs attention</span>
+              <strong>{pendingAging}</strong>
+            </div>
+            <div className="conv-kpi-card">
+              <span>Assigned to me</span>
+              <strong>{counts.mine}</strong>
+            </div>
+          </div>
+        )}
+
         <div className="conv-search">
           <Search size={14} />
           <input
-            placeholder="Search patient, agent, or complaint"
+            placeholder="Search patient, specialist, or complaint"
             value={localSearch}
             onChange={(e) => setLocalSearch(e.target.value)}
           />
@@ -302,126 +332,137 @@ export default function ConversationList() {
         </div>
       </div>
 
-      <div className="conv-list">
-        {isLoading ? (
-          Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="conv-card">
-              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <div
-                  className="skeleton"
-                  style={{ width: 36, height: 36, borderRadius: "50%" }}
-                />
-                <div style={{ flex: 1 }}>
+      <div className="conv-list-wrap">
+        <div className="conv-list">
+          {isLoading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="conv-card">
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                   <div
                     className="skeleton"
-                    style={{ width: "60%", height: 14, marginBottom: 6 }}
+                    style={{ width: 36, height: 36, borderRadius: "50%" }}
                   />
-                  <div
-                    className="skeleton"
-                    style={{ width: "80%", height: 12 }}
-                  />
+                  <div style={{ flex: 1 }}>
+                    <div
+                      className="skeleton"
+                      style={{ width: "60%", height: 14, marginBottom: 6 }}
+                    />
+                    <div
+                      className="skeleton"
+                      style={{ width: "80%", height: 12 }}
+                    />
+                  </div>
                 </div>
               </div>
+            ))
+          ) : visuallyFiltered.length === 0 ? (
+            <div className="conv-empty">
+              <Inbox size={32} />
+              <span>
+                {isAgent && statusFilter === "queue"
+                  ? "No pending conversations"
+                  : isAgent && statusFilter === "mine"
+                    ? "No active conversations assigned to you yet"
+                    : "No conversations"}
+              </span>
             </div>
-          ))
-        ) : visuallyFiltered.length === 0 ? (
-          <div className="conv-empty">
-            <Inbox size={32} />
-            <span>
-              {isAgent && statusFilter === "queue"
-                ? "No pending conversations"
-                : isAgent && statusFilter === "mine"
-                  ? "No active conversations assigned to you"
-                  : "No conversations"}
-            </span>
-          </div>
-        ) : (
-          <AnimatePresence initial={false}>
-            {visuallyFiltered.map((conv) => (
-              <motion.div
-                key={conv._id}
-                layout
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.22 }}
-                className={`conv-card ${activeConversationId === conv._id ? "active" : ""} priority-${conv.priority || "low"}`}
-                onClick={() => handleConversationClick(conv)}
-              >
-                <div className="conv-card-top">
-                  <div className="conv-avatar">
-                    {isAgent
-                      ? getInitials(conv.patient?.name)
-                      : conv.channel === "ai"
-                        ? "🤖"
-                        : getInitials(conv.agent?.name || "?")}
-                  </div>
-                  <div className="conv-info">
-                    <div className="conv-name">
+          ) : (
+            <AnimatePresence initial={false}>
+              {visuallyFiltered.map((conv) => (
+                <motion.div
+                  key={conv._id}
+                  layout
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  transition={{ duration: 0.22 }}
+                  className={`conv-card ${activeConversationId === conv._id ? "active" : ""} priority-${conv.priority || "low"}`}
+                  onClick={() => handleConversationClick(conv)}
+                  whileHover={{ x: 2 }}
+                  whileTap={{ scale: 0.995 }}
+                >
+                  <div className="conv-card-top">
+                    <div className="conv-avatar">
                       {isAgent
-                        ? conv.patient?.name || "Patient"
+                        ? getInitials(conv.patient?.name)
                         : conv.channel === "ai"
-                          ? "AI Assistant"
-                          : conv.agent?.name || "Waiting for agent..."}
+                          ? "🤖"
+                          : getInitials(conv.agent?.name || "?")}
                     </div>
-                    <div className="conv-preview">
-                      <span className={`channel-badge ${conv.channel}`}>
-                        {conv.channel}
-                      </span>{" "}
-                      <span className={`status-badge ${conv.status}`}>
-                        {getStatusLabel(conv)}
-                      </span>
-                      {(conv.intakeSummary?.triageLevel ||
-                        conv.intake?.triage?.level) && (
-                        <span
-                          className={`status-badge ${conv.priority || "medium"}`}
-                        >
-                          triage{" "}
-                          {conv.intakeSummary?.triageLevel ||
-                            conv.intake?.triage?.level}
-                        </span>
-                      )}
-                    </div>
-                    {(conv.intakeSummary?.complaintSnippet ||
-                      conv.intake?.clinical?.mainComplaint) && (
-                      <div className="conv-preview" style={{ marginTop: 4 }}>
-                        {(
-                          conv.intakeSummary?.complaintSnippet ||
-                          conv.intake?.clinical?.mainComplaint ||
-                          ""
-                        )
-                          .toString()
-                          .slice(0, 90)}
+                    <div className="conv-info">
+                      <div className="conv-name">
+                        {isAgent
+                          ? conv.patient?.name || "Patient"
+                          : conv.channel === "ai"
+                            ? "AI Assistant"
+                            : conv.agent?.name || "Waiting for a specialist..."}
                       </div>
-                    )}
-                  </div>
-                  <div className="conv-meta">
-                    <div className={`priority-dot ${conv.priority || "low"}`} />
-                    <div className="conv-meta-right">
-                      {conv.status === "pending" && (
-                        <span className="conv-wait-time">
-                          <Clock size={10} />
-                          {timeAgo(conv.createdAt)}
+                      <div className="conv-preview">
+                        <span className={`channel-badge ${conv.channel}`}>
+                          {conv.channel}
+                        </span>{" "}
+                        <span className={`status-badge ${conv.status}`}>
+                          {getStatusLabel(conv)}
                         </span>
+                        {conv.category && (
+                          <span className="status-badge category">
+                            {conv.category}
+                          </span>
+                        )}
+                        {(conv.intakeSummary?.triageLevel ||
+                          conv.intake?.triage?.level) && (
+                          <span
+                            className={`status-badge ${conv.priority || "medium"}`}
+                          >
+                            triage{" "}
+                            {conv.intakeSummary?.triageLevel ||
+                              conv.intake?.triage?.level}
+                          </span>
+                        )}
+                      </div>
+                      {(conv.intakeSummary?.complaintSnippet ||
+                        conv.intake?.clinical?.mainComplaint) && (
+                        <div className="conv-preview" style={{ marginTop: 4 }}>
+                          {(
+                            conv.intakeSummary?.complaintSnippet ||
+                            conv.intake?.clinical?.mainComplaint ||
+                            ""
+                          )
+                            .toString()
+                            .slice(0, 90)}
+                        </div>
                       )}
-                      <span className="conv-time">
-                        {timeAgo(conv.updatedAt)}
-                      </span>
                     </div>
-                    <ArrowUpRight size={12} className="conv-open-arrow" />
+                    <div className="conv-meta">
+                      <div
+                        className={`priority-dot ${conv.priority || "low"}`}
+                      />
+                      <div className="conv-meta-right">
+                        {conv.status === "pending" && (
+                          <span className="conv-wait-time">
+                            <Clock size={10} />
+                            {timeAgo(conv.createdAt)}
+                          </span>
+                        )}
+                        <span className="conv-time">
+                          {timeAgo(conv.updatedAt)}
+                        </span>
+                      </div>
+                      <ArrowUpRight size={12} className="conv-open-arrow" />
+                    </div>
                   </div>
-                </div>
-                {/* Agent ownership indicator */}
-                {isAgent && conv.agent && conv.agent._id !== userId && (
-                  <div className="conv-agent-label">
-                    <UserIcon size={10} />
-                    {conv.agent.name || "Agent"}
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        )}
+                  {/* Agent ownership indicator */}
+                  {isAgent && conv.agent && conv.agent._id !== userId && (
+                    <div className="conv-agent-label">
+                      <UserIcon size={10} />
+                      {conv.agent.name || "Care Specialist"}
+                    </div>
+                  )}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
+        </div>
       </div>
     </div>
   );

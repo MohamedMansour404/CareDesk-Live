@@ -7,11 +7,17 @@ import {
   TrendingUp,
   Bot,
   Users,
-  AlertTriangle,
   BarChart3,
+  Gauge,
 } from "lucide-react";
 import api from "../../lib/api";
 import { useAuthStore } from "../../stores/authStore";
+import { useMemo } from "react";
+
+interface ApiEnvelope<T> {
+  success?: boolean;
+  data?: T;
+}
 
 interface OverviewStats {
   totalConversations: number;
@@ -32,6 +38,54 @@ interface AgentStats {
   evaluation: {
     averageScore: number;
     totalEvaluations: number;
+  };
+}
+
+const EMPTY_OVERVIEW: OverviewStats = {
+  totalConversations: 0,
+  activeConversations: 0,
+  resolvedConversations: 0,
+  resolutionRate: 0,
+  totalMessages: 0,
+  priorityDistribution: {},
+  intentDistribution: {},
+  channelDistribution: {},
+};
+
+function readEnvelopeData<T>(payload: ApiEnvelope<T> | T): T {
+  const maybeEnvelope = payload as ApiEnvelope<T>;
+  return (maybeEnvelope?.data ?? payload) as T;
+}
+
+function normalizeOverview(
+  payload: ApiEnvelope<OverviewStats> | OverviewStats,
+): OverviewStats {
+  const data = readEnvelopeData(payload);
+  return {
+    totalConversations: Number(data?.totalConversations ?? 0),
+    activeConversations: Number(data?.activeConversations ?? 0),
+    resolvedConversations: Number(data?.resolvedConversations ?? 0),
+    resolutionRate: Number(data?.resolutionRate ?? 0),
+    totalMessages: Number(data?.totalMessages ?? 0),
+    priorityDistribution: data?.priorityDistribution ?? {},
+    intentDistribution: data?.intentDistribution ?? {},
+    channelDistribution: data?.channelDistribution ?? {},
+  };
+}
+
+function normalizeAgentStats(
+  payload: ApiEnvelope<AgentStats> | AgentStats,
+): AgentStats {
+  const data = readEnvelopeData(payload);
+  return {
+    totalConversations: Number(data?.totalConversations ?? 0),
+    resolvedConversations: Number(data?.resolvedConversations ?? 0),
+    resolutionRate: Number(data?.resolutionRate ?? 0),
+    avgResponseTimeFormatted: data?.avgResponseTimeFormatted ?? "N/A",
+    evaluation: {
+      averageScore: Number(data?.evaluation?.averageScore ?? 0),
+      totalEvaluations: Number(data?.evaluation?.totalEvaluations ?? 0),
+    },
   };
 }
 
@@ -61,7 +115,7 @@ export default function AnalyticsDashboard() {
     queryKey: ["analytics-overview"],
     queryFn: async () => {
       const res = await api.get("/api/dashboard/stats/overview");
-      return res.data;
+      return normalizeOverview(res.data);
     },
     refetchInterval: 30_000,
   });
@@ -70,40 +124,55 @@ export default function AnalyticsDashboard() {
     queryKey: ["analytics-agent", userId],
     queryFn: async () => {
       const res = await api.get(`/api/dashboard/stats/agent/${userId}`);
-      return res.data;
+      return normalizeAgentStats(res.data);
     },
     enabled: !!userId,
     refetchInterval: 30_000,
   });
 
-  const statCards = overview
-    ? [
-        {
-          label: "Total Conversations",
-          value: overview.totalConversations,
-          icon: <MessageSquare size={20} />,
-          color: "var(--blue)",
-        },
-        {
-          label: "Active Now",
-          value: overview.activeConversations,
-          icon: <Clock size={20} />,
-          color: "var(--amber)",
-        },
-        {
-          label: "Resolved",
-          value: overview.resolvedConversations,
-          icon: <CheckCircle size={20} />,
-          color: "var(--emerald)",
-        },
-        {
-          label: "Resolution Rate",
-          value: `${overview.resolutionRate}%`,
-          icon: <TrendingUp size={20} />,
-          color: "var(--violet)",
-        },
-      ]
-    : [];
+  const safeOverview = overview ?? EMPTY_OVERVIEW;
+
+  const topIntent = useMemo(() => {
+    const entries = Object.entries(safeOverview.intentDistribution || {});
+    if (entries.length === 0) return null;
+    const [intent, count] = entries.sort(([, a], [, b]) => b - a)[0];
+    return { intent, count };
+  }, [safeOverview.intentDistribution]);
+
+  const activePressure = useMemo(() => {
+    if (!safeOverview.totalConversations) return 0;
+    return Math.round(
+      (safeOverview.activeConversations / safeOverview.totalConversations) *
+        100,
+    );
+  }, [safeOverview.totalConversations, safeOverview.activeConversations]);
+
+  const statCards = [
+    {
+      label: "Total Conversations",
+      value: safeOverview.totalConversations,
+      icon: <MessageSquare size={20} />,
+      color: "var(--blue)",
+    },
+    {
+      label: "Active Now",
+      value: safeOverview.activeConversations,
+      icon: <Clock size={20} />,
+      color: "var(--amber)",
+    },
+    {
+      label: "Resolved",
+      value: safeOverview.resolvedConversations,
+      icon: <CheckCircle size={20} />,
+      color: "var(--emerald)",
+    },
+    {
+      label: "Resolution Rate",
+      value: `${safeOverview.resolutionRate}%`,
+      icon: <TrendingUp size={20} />,
+      color: "var(--violet)",
+    },
+  ];
 
   const renderDistributionBar = (
     dist: Record<string, number>,
@@ -146,7 +215,7 @@ export default function AnalyticsDashboard() {
                   }}
                 />
                 <span className="analytics-legend-label">
-                  {key.replace("_", " ")}
+                  {key.replace(/_/g, " ")}
                 </span>
                 <span className="analytics-legend-count">{count}</span>
               </div>
@@ -212,12 +281,40 @@ export default function AnalyticsDashboard() {
 
   return (
     <div className="analytics-panel">
-      <div className="analytics-header">
-        <BarChart3 size={20} />
-        <h2>Analytics Dashboard</h2>
-      </div>
+      <motion.div
+        className="analytics-hero"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+      >
+        <div className="analytics-header">
+          <BarChart3 size={20} />
+          <h2>Operations Analytics</h2>
+        </div>
+        <p>
+          Real-time visibility into conversation throughput, quality, and care
+          specialist responsiveness.
+        </p>
+        <div className="analytics-hero-metrics">
+          <div className="analytics-hero-pill">
+            <Gauge size={14} />
+            Active pressure {activePressure}%
+          </div>
+          {topIntent && (
+            <div className="analytics-hero-pill">
+              <TrendingUp size={14} />
+              Top intent: {topIntent.intent.replace("_", " ")} (
+              {topIntent.count})
+            </div>
+          )}
+        </div>
+      </motion.div>
 
       {/* Stat Cards */}
+      <div className="analytics-section-head">
+        <h3>At a Glance</h3>
+        <p>Core workload and resolution indicators for the current period.</p>
+      </div>
       <div className="analytics-stats-grid">
         {statCards.map((card, i) => (
           <motion.div
@@ -236,28 +333,60 @@ export default function AnalyticsDashboard() {
         ))}
       </div>
 
-      {/* Distributions */}
-      <div className="analytics-distributions">
-        {overview?.channelDistribution &&
-          renderDistributionBar(
-            overview.channelDistribution,
-            { ai: "var(--violet)", human: "var(--blue)" },
-            "Channel Distribution",
-          )}
+      <div className="analytics-grid-main">
+        {/* Distributions */}
+        <div className="analytics-distributions">
+          <div className="analytics-section-head compact">
+            <h3>Flow Breakdown</h3>
+            <p>How conversations are split by channel, urgency, and intent.</p>
+          </div>
+          {safeOverview.channelDistribution &&
+            renderDistributionBar(
+              safeOverview.channelDistribution,
+              { ai: "var(--violet)", human: "var(--blue)" },
+              "Channel Distribution",
+            )}
 
-        {overview?.priorityDistribution &&
-          renderDistributionBar(
-            overview.priorityDistribution,
-            PRIORITY_COLORS,
-            "Priority Distribution",
-          )}
+          {safeOverview.priorityDistribution &&
+            renderDistributionBar(
+              safeOverview.priorityDistribution,
+              PRIORITY_COLORS,
+              "Priority Distribution",
+            )}
 
-        {overview?.intentDistribution &&
-          renderDistributionBar(
-            overview.intentDistribution,
-            INTENT_COLORS,
-            "Intent Categories",
-          )}
+          {safeOverview.intentDistribution &&
+            renderDistributionBar(
+              safeOverview.intentDistribution,
+              INTENT_COLORS,
+              "Intent Categories",
+            )}
+        </div>
+
+        <motion.aside
+          className="analytics-side-insights"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+        >
+          <div className="analytics-insight-card">
+            <h4>Conversation Velocity</h4>
+            <p>
+              {safeOverview.activeConversations} active out of{" "}
+              {safeOverview.totalConversations} total conversations.
+            </p>
+          </div>
+          <div className="analytics-insight-card">
+            <h4>Resolution Confidence</h4>
+            <p>
+              {safeOverview.resolutionRate}% currently resolved across tracked
+              flows.
+            </p>
+          </div>
+          <div className="analytics-insight-card">
+            <h4>Message Throughput</h4>
+            <p>{safeOverview.totalMessages} messages processed so far.</p>
+          </div>
+        </motion.aside>
       </div>
 
       {/* Agent Performance */}
@@ -268,9 +397,13 @@ export default function AnalyticsDashboard() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
         >
+          <div className="analytics-section-head compact analytics-section-head-inline">
+            <h3>Specialist Performance</h3>
+            <p>Your handling and quality metrics in one view.</p>
+          </div>
           <div className="analytics-agent-header">
             <Users size={16} />
-            <span>Your Performance</span>
+            <span>Care Specialist Performance</span>
           </div>
           <div className="analytics-agent-grid">
             <div className="analytics-agent-stat">
@@ -320,7 +453,7 @@ export default function AnalyticsDashboard() {
       {/* Messages stat */}
       <div className="analytics-footer-stat">
         <Bot size={14} />
-        <span>{overview?.totalMessages ?? 0} total messages processed</span>
+        <span>{safeOverview.totalMessages} total messages processed</span>
       </div>
     </div>
   );

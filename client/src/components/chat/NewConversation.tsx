@@ -143,20 +143,20 @@ export default function NewConversation() {
   return (
     <div className="new-conv-panel">
       <motion.div
+        className="new-conv-shell"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        style={{ textAlign: "center" }}
       >
-        <h2>Start a New Conversation</h2>
-        <p>
+        <h2 className="new-conv-title">Start a New Conversation</h2>
+        <p className="new-conv-subtitle">
           {selectedChannel
             ? "Complete intake details before chat starts"
             : "Choose how you'd like to get support"}
         </p>
 
         {!selectedChannel ? (
-          <div className="channel-cards" style={{ marginTop: 24 }}>
+          <div className="channel-cards">
             <motion.div
               className="channel-card"
               whileHover={{ scale: 1.02 }}
@@ -179,136 +179,133 @@ export default function NewConversation() {
               <div className="channel-card-icon human-icon">
                 <Users size={24} />
               </div>
-              <h3>Human Agent</h3>
-              <p>Talk to a support agent</p>
+              <h3>Care Specialist</h3>
+              <p>Talk to a live care specialist</p>
             </motion.div>
           </div>
         ) : (
-          <div
-            style={{
-              marginTop: 24,
-              display: "grid",
-              gap: 12,
-              textAlign: "left",
-            }}
-          >
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Age *</label>
-              <input
-                className="auth-input"
-                type="number"
-                min={1}
-                max={120}
-                value={form.age}
-                onChange={(e) => updateField("age", e.target.value)}
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Gender *</label>
-              <select
-                className="auth-input"
-                value={form.gender}
-                onChange={(e) => updateField("gender", e.target.value)}
-              >
-                <option value="male">Male</option>
-                <option value="female">Female</option>
-                <option value="non_binary">Non-binary</option>
-                <option value="prefer_not_to_say">Prefer not to say</option>
-              </select>
-            </div>
-
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Height (cm)</label>
-              <input
-                className="auth-input"
-                type="number"
-                min={50}
-                max={250}
-                value={form.heightCm}
-                onChange={(e) => updateField("heightCm", e.target.value)}
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Weight (kg)</label>
-              <input
-                className="auth-input"
-                type="number"
-                min={2}
-                max={300}
-                value={form.weightKg}
-                onChange={(e) => updateField("weightKg", e.target.value)}
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Chronic conditions (comma-separated)</label>
-              <input
-                className="auth-input"
-                type="text"
-                value={form.chronicConditions}
-                onChange={(e) =>
-                  updateField("chronicConditions", e.target.value)
-                }
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Symptom duration *</label>
-              <div style={{ display: "flex", gap: 8 }}>
+          <div className="new-conv-form-wrap">
+            <div className="new-conv-form-grid two-col">
+              <div className="new-conv-field">
+                <label>Age *</label>
                 <input
-                  className="auth-input"
+                  className="new-conv-input"
                   type="number"
                   min={1}
-                  max={3650}
-                  value={form.symptomDurationValue}
-                  onChange={(e) =>
-                    updateField("symptomDurationValue", e.target.value)
-                  }
+                  max={120}
+                  value={form.age}
+                  onChange={(e) => updateField("age", e.target.value)}
                 />
+              </div>
+
+              <div className="new-conv-field">
+                <label>Gender *</label>
                 <select
-                  className="auth-input"
-                  value={form.symptomDurationUnit}
-                  onChange={(e) =>
-                    updateField("symptomDurationUnit", e.target.value)
-                  }
+                  className="new-conv-input"
+                  value={form.gender}
+                  onChange={(e) => updateField("gender", e.target.value)}
                 >
-                  <option value="hours">hours</option>
-                  <option value="days">days</option>
-                  <option value="weeks">weeks</option>
-                  <option value="months">months</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="non_binary">Non-binary</option>
+                  <option value="prefer_not_to_say">Prefer not to say</option>
                 </select>
+              </div>
+
+              <div className="new-conv-field">
+                <label>Height (cm)</label>
+                <input
+                  className="new-conv-input"
+                  type="number"
+                  min={50}
+                  max={250}
+                  value={form.heightCm}
+                  onChange={(e) => updateField("heightCm", e.target.value)}
+                />
+              </div>
+
+              <div className="new-conv-field">
+                <label>Weight (kg)</label>
+                <input
+                  className="new-conv-input"
+                  type="number"
+                  min={2}
+                  max={300}
+                  value={form.weightKg}
+                  onChange={(e) => updateField("weightKg", e.target.value)}
+                />
               </div>
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Pain scale (0-10) *</label>
-              <input
-                className="auth-input"
-                type="number"
-                min={0}
-                max={10}
-                value={form.painScale}
-                onChange={(e) => updateField("painScale", e.target.value)}
-              />
+            <div className="new-conv-form-grid">
+              <div className="new-conv-field">
+                <label>Chronic conditions (comma-separated)</label>
+                <input
+                  className="new-conv-input"
+                  type="text"
+                  value={form.chronicConditions}
+                  onChange={(e) =>
+                    updateField("chronicConditions", e.target.value)
+                  }
+                />
+              </div>
+
+              <div className="new-conv-field">
+                <label>Symptom duration *</label>
+                <div className="new-conv-inline-field">
+                  <input
+                    className="new-conv-input"
+                    type="number"
+                    min={1}
+                    max={3650}
+                    value={form.symptomDurationValue}
+                    onChange={(e) =>
+                      updateField("symptomDurationValue", e.target.value)
+                    }
+                  />
+                  <select
+                    className="new-conv-input"
+                    value={form.symptomDurationUnit}
+                    onChange={(e) =>
+                      updateField("symptomDurationUnit", e.target.value)
+                    }
+                  >
+                    <option value="hours">hours</option>
+                    <option value="days">days</option>
+                    <option value="weeks">weeks</option>
+                    <option value="months">months</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="new-conv-field">
+                <label>Pain scale (0-10) *</label>
+                <input
+                  className="new-conv-input"
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={form.painScale}
+                  onChange={(e) => updateField("painScale", e.target.value)}
+                />
+              </div>
+
+              <div className="new-conv-field">
+                <label>Main complaint *</label>
+                <textarea
+                  className="new-conv-input new-conv-textarea"
+                  rows={4}
+                  value={form.mainComplaint}
+                  onChange={(e) => updateField("mainComplaint", e.target.value)}
+                />
+              </div>
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
-              <label>Main complaint *</label>
-              <textarea
-                className="auth-input"
-                rows={4}
-                value={form.mainComplaint}
-                onChange={(e) => updateField("mainComplaint", e.target.value)}
-              />
-            </div>
-
-            <div style={{ display: "flex", gap: 8, justifyContent: "end" }}>
-              <button className="btn-secondary" onClick={resetStep}>
+            <div className="new-conv-actions">
+              <button className="new-conv-btn ghost" onClick={resetStep}>
                 Back
               </button>
-              <button className="btn-primary" onClick={handleCreate}>
+              <button className="new-conv-btn primary" onClick={handleCreate}>
                 Submit Intake & Start Chat
               </button>
             </div>
@@ -317,13 +314,9 @@ export default function NewConversation() {
 
         {creating && (
           <motion.p
+            className="new-conv-status"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            style={{
-              marginTop: 16,
-              color: "var(--text-muted)",
-              fontSize: "0.875rem",
-            }}
           >
             Creating conversation…
           </motion.p>
@@ -331,13 +324,9 @@ export default function NewConversation() {
 
         {error && (
           <motion.p
+            className="new-conv-error"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            style={{
-              marginTop: 12,
-              color: "var(--red)",
-              fontSize: "0.8125rem",
-            }}
           >
             {error}
           </motion.p>

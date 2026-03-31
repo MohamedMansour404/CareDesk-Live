@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -64,6 +64,13 @@ interface ConversationDetails {
       reasons?: string[];
     };
   };
+}
+
+interface MessageGroup {
+  id: string;
+  senderRole: string;
+  senderName?: string;
+  messages: Message[];
 }
 
 export default function ChatArea() {
@@ -216,7 +223,7 @@ export default function ChatArea() {
     },
     onSuccess: () => {
       setActionError("");
-      pushToast("success", "Conversation escalated to a human agent.");
+      pushToast("success", "Conversation escalated to a care specialist.");
       invalidateConversations(0);
       queryClient.invalidateQueries({
         queryKey: ["conversation", activeConversationId],
@@ -224,7 +231,8 @@ export default function ChatArea() {
     },
     onError: (err: any) => {
       const message =
-        err?.response?.data?.message || "Failed to transfer to a human agent.";
+        err?.response?.data?.message ||
+        "Failed to transfer to a care specialist.";
       setActionError(message);
       pushToast("error", message);
     },
@@ -298,7 +306,9 @@ export default function ChatArea() {
         data.userId !== userId
       ) {
         setTypingLabel(
-          data.role === "agent" ? "Agent is typing…" : "Patient is typing…",
+          data.role === "agent"
+            ? "Care specialist is typing…"
+            : "Patient is typing…",
         );
         setTyping(data.userId, true);
         setTimeout(() => clearTyping(data.userId), 3000);
@@ -333,6 +343,7 @@ export default function ChatArea() {
     socket.on("message:queue:failed", handleQueueFailed);
     socket.on("agent:typing", handleTypingEvent);
     socket.on("patient:typing", handleTypingEvent);
+    socket.on("typing:update", handleTypingEvent);
 
     return () => {
       socket.off("message:new", handleNewMessage);
@@ -345,6 +356,7 @@ export default function ChatArea() {
       socket.off("message:queue:failed", handleQueueFailed);
       socket.off("agent:typing", handleTypingEvent);
       socket.off("patient:typing", handleTypingEvent);
+      socket.off("typing:update", handleTypingEvent);
     };
   }, [
     activeConversationId,
@@ -409,6 +421,100 @@ export default function ChatArea() {
       minute: "2-digit",
     });
 
+  const groupedMessages = useMemo<MessageGroup[]>(() => {
+    if (messages.length === 0) return [];
+
+    const sorted = [...messages].sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+    const groups: MessageGroup[] = [];
+
+    for (const msg of sorted) {
+      const last = groups[groups.length - 1];
+      const currentSender = msg.sender?._id || msg.senderRole;
+
+      if (!last) {
+        groups.push({
+          id: msg._id,
+          senderRole: msg.senderRole,
+          senderName: msg.sender?.name,
+          messages: [msg],
+        });
+        continue;
+      }
+
+      const lastMsg = last.messages[last.messages.length - 1];
+      const lastSender = lastMsg.sender?._id || last.senderRole;
+      const withinWindow =
+        Math.abs(
+          new Date(msg.createdAt).getTime() -
+            new Date(lastMsg.createdAt).getTime(),
+        ) <=
+        3 * 60 * 1000;
+
+      if (
+        last.senderRole === msg.senderRole &&
+        lastSender === currentSender &&
+        withinWindow
+      ) {
+        last.messages.push(msg);
+      } else {
+        groups.push({
+          id: msg._id,
+          senderRole: msg.senderRole,
+          senderName: msg.sender?.name,
+          messages: [msg],
+        });
+      }
+    }
+
+    return groups;
+  }, [messages]);
+
+  const renderAiContent = (content: string) => {
+    const lines = content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return <p>{content}</p>;
+    }
+
+    return (
+      <div className="ai-content">
+        {lines.map((line, index) => {
+          if (line.startsWith("- ") || line.startsWith("* ")) {
+            return (
+              <div key={`${line}-${index}`} className="ai-line ai-bullet">
+                <span className="ai-bullet-dot" />
+                <span>{line.slice(2)}</span>
+              </div>
+            );
+          }
+
+          const keyValueMatch = line.match(/^([^:]+):\s*(.+)$/);
+          if (keyValueMatch) {
+            return (
+              <div key={`${line}-${index}`} className="ai-line ai-key-value">
+                <strong>{keyValueMatch[1]}:</strong>
+                <span>{keyValueMatch[2]}</span>
+              </div>
+            );
+          }
+
+          return (
+            <p key={`${line}-${index}`} className="ai-line">
+              {line}
+            </p>
+          );
+        })}
+      </div>
+    );
+  };
+
   const getInitials = (name?: string) =>
     name
       ?.split(" ")
@@ -418,6 +524,23 @@ export default function ChatArea() {
       .slice(0, 2) || "?";
 
   const isTyping = Object.values(typingUsers).some(Boolean);
+  const isAgentUser = user?.role === "agent";
+  const isResolvedConversation = convData?.status === "resolved";
+  const isPendingConversation = convData?.status === "pending";
+  const isAssignedToMe = convData?.agent?._id === user?._id;
+  const isAssignedToOther = Boolean(
+    isAgentUser && convData?.agent && !isAssignedToMe,
+  );
+  const canEndConversation = Boolean(
+    !isResolvedConversation &&
+    (!isAgentUser || isAssignedToMe || !convData?.agent),
+  );
+
+  const conversationTitle = isAgentUser
+    ? convData?.patient?.name || "Patient"
+    : convData?.channel === "ai"
+      ? "AI Assistant"
+      : convData?.agent?.name || "Care Specialist";
 
   // Empty state
   if (!activeConversationId) {
@@ -439,11 +562,9 @@ export default function ChatArea() {
       {/* Header */}
       <div className="chat-header">
         <div className="chat-header-info">
-          <div className="conv-avatar">
-            {getInitials(convData?.patient?.name)}
-          </div>
+          <div className="conv-avatar">{getInitials(conversationTitle)}</div>
           <div>
-            <h3>{convData?.patient?.name || "Conversation"}</h3>
+            <h3>{conversationTitle}</h3>
             <span>
               <span className={`channel-badge ${convData?.channel}`}>
                 {convData?.channel}
@@ -456,55 +577,16 @@ export default function ChatArea() {
         </div>
         <div className="chat-actions">
           {user?.role === "agent" && (
-            <>
-              <button
-                className="chat-action-btn"
-                onClick={() => {
-                  setShowAssist(!showAssist);
-                  if (!showAssist) refetchAssist();
-                }}
-                title="AI Assistant"
-                aria-label="Toggle AI assistant"
-                style={
-                  showAssist
-                    ? {
-                        color: "var(--violet)",
-                        background: "rgba(139,92,246,0.1)",
-                      }
-                    : {}
-                }
-              >
-                <Sparkles size={18} />
-              </button>
-            </>
-          )}
-          {user?.role === "patient" &&
-            convData?.channel === "ai" &&
-            convData?.status !== "resolved" && (
-              <button
-                className="chat-action-btn"
-                onClick={() => escalateMutation.mutate()}
-                title="Transfer to Human Agent"
-                aria-label="Escalate to human agent"
-                disabled={escalateMutation.isPending}
-                style={{ color: "var(--teal)" }}
-              >
-                <UserRoundPlus size={18} />
-              </button>
-            )}
-          {convData?.status !== "resolved" && (
             <button
-              className="chat-action-btn"
-              onClick={() => resolveMutation.mutate()}
-              title={user?.role === "agent" ? "Resolve" : "Close Conversation"}
-              aria-label={
-                user?.role === "agent"
-                  ? "Resolve conversation"
-                  : "Close conversation"
-              }
-              disabled={resolveMutation.isPending}
+              className={`chat-action-btn ${showAssist ? "is-active" : ""}`}
+              onClick={() => {
+                setShowAssist(!showAssist);
+                if (!showAssist) refetchAssist();
+              }}
+              title="AI Assistant"
+              aria-label="Toggle AI assistant"
             >
-              <CheckCircle size={18} />
+              <Sparkles size={18} />
             </button>
           )}
           <button
@@ -517,6 +599,31 @@ export default function ChatArea() {
           </button>
         </div>
       </div>
+
+      {!isResolvedConversation && (
+        <div className="chat-critical-actions">
+          {user?.role === "patient" && convData?.channel === "ai" && (
+            <button
+              className="chat-critical-btn transfer"
+              onClick={() => escalateMutation.mutate()}
+              disabled={escalateMutation.isPending}
+            >
+              <UserRoundPlus size={15} />
+              Transfer to Care Specialist
+            </button>
+          )}
+          {canEndConversation && (
+            <button
+              className="chat-critical-btn end"
+              onClick={() => resolveMutation.mutate()}
+              disabled={resolveMutation.isPending}
+            >
+              <CheckCircle size={15} />
+              End Conversation
+            </button>
+          )}
+        </div>
+      )}
 
       {(actionError || runtimeNotice) && (
         <div className="chat-inline-alert">
@@ -535,46 +642,76 @@ export default function ChatArea() {
         </div>
       )}
 
-      {user?.role === "agent" && convData?.intake && (
-        <div
-          className="chat-inline-alert"
-          style={{
-            display: "grid",
-            gap: 6,
-            alignItems: "start",
-            gridTemplateColumns: "1fr",
-          }}
+      {isAgentUser && convData?.intake && (
+        <section
+          className="patient-intake-panel"
+          aria-label="Patient intake summary"
         >
-          <span>
-            <strong>Triage:</strong> {convData.intake.triage?.level || "n/a"}
-            {typeof convData.intake.triage?.score === "number" &&
-              ` (${convData.intake.triage?.score})`}
-          </span>
-          <span>
-            <strong>Main complaint:</strong>{" "}
-            {convData.intake.clinical?.mainComplaint || "n/a"}
-          </span>
-          <span>
-            <strong>Age/Gender:</strong>{" "}
-            {convData.intake.demographics?.age || "n/a"}
-            {" / "}
-            {convData.intake.demographics?.gender || "n/a"}
-          </span>
-          <span>
-            <strong>Pain:</strong>{" "}
-            {convData.intake.clinical?.painScale ?? "n/a"}
-            {" | "}
-            <strong>Duration:</strong>{" "}
-            {convData.intake.clinical?.symptomDuration?.value ?? "n/a"}{" "}
-            {convData.intake.clinical?.symptomDuration?.unit || ""}
-          </span>
-          {(convData.intake.clinical?.chronicConditions || []).length > 0 && (
-            <span>
-              <strong>Chronic conditions:</strong>{" "}
-              {convData.intake.clinical?.chronicConditions?.join(", ")}
-            </span>
-          )}
-        </div>
+          <header className="patient-intake-head">
+            <h4>Patient Intake Snapshot</h4>
+            <span>Use this to triage faster before replying</span>
+          </header>
+
+          <div className="patient-intake-metrics">
+            <div className="intake-metric warning">
+              <span>Pain</span>
+              <strong>{convData.intake.clinical?.painScale ?? "n/a"}/10</strong>
+            </div>
+            <div className="intake-metric info">
+              <span>Duration</span>
+              <strong>
+                {convData.intake.clinical?.symptomDuration?.value ?? "n/a"}{" "}
+                {convData.intake.clinical?.symptomDuration?.unit || ""}
+              </strong>
+            </div>
+            <div className="intake-metric priority">
+              <span>Triage</span>
+              <strong>
+                {convData.intake.triage?.level || "n/a"}
+                {typeof convData.intake.triage?.score === "number"
+                  ? ` (${convData.intake.triage?.score})`
+                  : ""}
+              </strong>
+            </div>
+          </div>
+
+          <div className="patient-intake-grid">
+            <article className="intake-card">
+              <h5>Basic Info</h5>
+              <p>
+                Age:{" "}
+                <strong>{convData.intake.demographics?.age || "n/a"}</strong>
+              </p>
+              <p>
+                Gender:{" "}
+                <strong>{convData.intake.demographics?.gender || "n/a"}</strong>
+              </p>
+              <p>
+                Height/Weight:{" "}
+                <strong>{convData.intake.vitals?.heightCm || "n/a"} cm</strong>
+                {" / "}
+                <strong>{convData.intake.vitals?.weightKg || "n/a"} kg</strong>
+              </p>
+            </article>
+
+            <article className="intake-card">
+              <h5>Condition</h5>
+              <p className="intake-complaint">
+                {convData.intake.clinical?.mainComplaint ||
+                  "No complaint provided"}
+              </p>
+              <p>
+                Chronic conditions:{" "}
+                <strong>
+                  {(convData.intake.clinical?.chronicConditions || []).length >
+                  0
+                    ? convData.intake.clinical?.chronicConditions?.join(", ")
+                    : "None reported"}
+                </strong>
+              </p>
+            </article>
+          </div>
+        </section>
       )}
 
       {/* AI Assist Bar */}
@@ -646,52 +783,105 @@ export default function ChatArea() {
               </div>
             </div>
           ))
-        ) : messages.length === 0 ? (
+        ) : groupedMessages.length === 0 ? (
           <div className="chat-empty-messages">
             <MessageSquare size={20} />
             <span>No messages yet. Start the conversation below.</span>
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {messages.map((msg) => (
+            {groupedMessages.map((group, groupIndex) => (
               <motion.div
-                key={msg._id}
-                initial={{ opacity: 0, y: 12, scale: 0.97 }}
+                key={group.id}
+                initial={{ opacity: 0, y: 16, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.25, ease: "easeOut" }}
-                className={`chat-bubble-wrapper ${msg.senderRole}`}
+                transition={{
+                  duration: 0.28,
+                  ease: "easeOut",
+                  delay: Math.min(groupIndex * 0.02, 0.12),
+                }}
+                className={`chat-group ${group.senderRole}`}
               >
-                <div className={`chat-bubble-avatar ${msg.senderRole}`}>
-                  {msg.senderRole === "ai"
+                <div className={`chat-bubble-avatar ${group.senderRole}`}>
+                  {group.senderRole === "ai"
                     ? "AI"
-                    : getInitials(msg.sender?.name)}
+                    : getInitials(group.senderName)}
                 </div>
-                <div>
-                  <div className={`chat-bubble ${msg.senderRole}`}>
-                    {msg.content}
+                <div className="chat-group-content">
+                  <div className={`chat-group-label ${group.senderRole}`}>
+                    {group.senderRole === "agent"
+                      ? "Care Specialist"
+                      : group.senderRole === "ai"
+                        ? "AI Assistant"
+                        : "Patient"}
                   </div>
+
+                  {group.messages.map((msg, msgIndex) => (
+                    <motion.div
+                      key={msg._id}
+                      initial={
+                        group.senderRole === "ai"
+                          ? { opacity: 0, y: 10, filter: "blur(3px)" }
+                          : { opacity: 0, y: 6 }
+                      }
+                      animate={
+                        group.senderRole === "ai"
+                          ? { opacity: 1, y: 0, filter: "blur(0px)" }
+                          : { opacity: 1, y: 0 }
+                      }
+                      transition={{
+                        duration: group.senderRole === "ai" ? 0.34 : 0.2,
+                        delay:
+                          group.senderRole === "ai"
+                            ? Math.min(msgIndex * 0.06, 0.18)
+                            : Math.min(msgIndex * 0.03, 0.1),
+                      }}
+                      className={`chat-bubble ${group.senderRole}`}
+                    >
+                      {group.senderRole === "ai"
+                        ? renderAiContent(msg.content)
+                        : msg.content}
+                    </motion.div>
+                  ))}
+
                   <div className="chat-bubble-time">
-                    {formatTime(msg.createdAt)}
+                    {formatTime(
+                      group.messages[group.messages.length - 1].createdAt,
+                    )}
                   </div>
-                  {msg.analysis && msg.senderRole === "patient" && (
-                    <div className="analysis-tags">
-                      {msg.analysis.intent && (
-                        <span className="analysis-tag intent">
-                          {msg.analysis.intent}
-                        </span>
-                      )}
-                      {msg.analysis.priority && (
-                        <span className="analysis-tag priority">
-                          {msg.analysis.priority}
-                        </span>
-                      )}
-                      {msg.analysis.sentiment && (
-                        <span className="analysis-tag sentiment">
-                          {msg.analysis.sentiment}
-                        </span>
-                      )}
-                    </div>
-                  )}
+
+                  {group.messages[group.messages.length - 1].analysis &&
+                    group.senderRole === "patient" && (
+                      <div className="analysis-tags">
+                        {group.messages[group.messages.length - 1].analysis
+                          ?.intent && (
+                          <span className="analysis-tag intent">
+                            {
+                              group.messages[group.messages.length - 1].analysis
+                                ?.intent
+                            }
+                          </span>
+                        )}
+                        {group.messages[group.messages.length - 1].analysis
+                          ?.priority && (
+                          <span className="analysis-tag priority">
+                            {
+                              group.messages[group.messages.length - 1].analysis
+                                ?.priority
+                            }
+                          </span>
+                        )}
+                        {group.messages[group.messages.length - 1].analysis
+                          ?.sentiment && (
+                          <span className="analysis-tag sentiment">
+                            {
+                              group.messages[group.messages.length - 1].analysis
+                                ?.sentiment
+                            }
+                          </span>
+                        )}
+                      </div>
+                    )}
                 </div>
               </motion.div>
             ))}
@@ -714,11 +904,9 @@ export default function ChatArea() {
 
       {/* Composer or Status Banner */}
       {(() => {
-        const isResolved = convData?.status === "resolved";
-        const isAgent = user?.role === "agent";
-        const isAssignedToMe = convData?.agent?._id === user?._id;
-        const isAssignedToOther = isAgent && convData?.agent && !isAssignedToMe;
-        const isPending = convData?.status === "pending";
+        const isResolved = isResolvedConversation;
+        const isAgent = isAgentUser;
+        const isPending = isPendingConversation;
         const canReply =
           !isResolved &&
           (!isAgent || isAssignedToMe || (!convData?.agent && !isPending));
@@ -751,7 +939,9 @@ export default function ChatArea() {
               <Lock size={16} />
               <span>
                 This conversation is handled by{" "}
-                <strong>{convData?.agent?.name || "another agent"}</strong>
+                <strong>
+                  {convData?.agent?.name || "another care specialist"}
+                </strong>
               </span>
             </div>
           );

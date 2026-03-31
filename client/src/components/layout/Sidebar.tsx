@@ -1,10 +1,17 @@
-import { MessageSquare, BarChart3, LogOut, Activity } from "lucide-react";
+import {
+  MessageSquare,
+  BarChart3,
+  LogOut,
+  Activity,
+  Radar,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useAuthStore } from "../../stores/authStore";
 import api from "../../lib/api";
 import { getSocket } from "../../lib/socket";
 import { useToastStore } from "../../stores/toastStore";
+import { getRoleTitle } from "../../lib/roleLabels";
 
 interface SidebarProps {
   activeView: string;
@@ -79,9 +86,11 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
         <div className="sidebar-logo">CD</div>
         <div className="sidebar-brand">
           <strong>CareDesk</strong>
-          <span>Support OS</span>
+          <span>Premium Support OS</span>
         </div>
       </div>
+
+      <div className="sidebar-section-title">Workspace</div>
 
       <nav className="sidebar-nav">
         <button
@@ -90,8 +99,13 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
           title="Conversations Workspace"
           aria-label="Open conversations"
         >
-          <MessageSquare size={18} />
-          <span>Workspace</span>
+          <span className="sidebar-item-icon">
+            <MessageSquare size={18} />
+          </span>
+          <span className="sidebar-item-text">
+            <strong>Conversations</strong>
+            <small>Live inbox and chat</small>
+          </span>
           {pendingCount > 0 && (
             <span className="sidebar-badge">{pendingCount}</span>
           )}
@@ -104,8 +118,13 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
             title="Analytics"
             aria-label="Open analytics"
           >
-            <BarChart3 size={18} />
-            <span>Analytics</span>
+            <span className="sidebar-item-icon">
+              <BarChart3 size={18} />
+            </span>
+            <span className="sidebar-item-text">
+              <strong>Analytics</strong>
+              <small>Performance intelligence</small>
+            </span>
           </button>
         )}
       </nav>
@@ -125,7 +144,11 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
         >
           <span className="dot" />
           <span>{isSocketConnected ? "Connected" : "Reconnecting"}</span>
+          <Radar size={12} />
+        </div>
+        <div className="sidebar-ops-note">
           <Activity size={12} />
+          Events synchronized
         </div>
       </div>
 
@@ -133,13 +156,13 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
         <div className="sidebar-user">
           <div
             className="sidebar-avatar"
-            title={`${user?.name} (${user?.role})`}
+            title={`${user?.name} (${getRoleTitle(user?.role)})`}
           >
             {initials}
           </div>
           <div>
             <div className="sidebar-user-name">{user?.name || "User"}</div>
-            <span className="sidebar-role">{user?.role}</span>
+            <span className="sidebar-role">{getRoleTitle(user?.role)}</span>
           </div>
         </div>
 
@@ -149,8 +172,13 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
           title="Logout"
           aria-label="Log out"
         >
-          <LogOut size={16} />
-          <span>Sign out</span>
+          <span className="sidebar-item-icon">
+            <LogOut size={16} />
+          </span>
+          <span className="sidebar-item-text">
+            <strong>Sign out</strong>
+            <small>End this session</small>
+          </span>
         </button>
       </div>
     </aside>
