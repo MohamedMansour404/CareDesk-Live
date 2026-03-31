@@ -1,0 +1,21 @@
+{
+  "name": "care-desk-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "CareDesk full-stack workspace scripts",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently \"npm run start:dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run start:dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "npm run build --prefix server",
+    "build:client": "npm run build --prefix client",
+    "test": "npm run test --prefix server",
+    "test:e2e": "npm run test:e2e --prefix server",
+    "lint": "npm run lint --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
