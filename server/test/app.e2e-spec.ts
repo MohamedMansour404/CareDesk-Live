@@ -17,7 +17,7 @@ class TestConversationsController {
 
   @Post()
   create(@Body() dto: CreateConversationDto) {
-    return this.conversationsService.create('patient-1', dto as any);
+    return this.conversationsService.create('patient-1', dto);
   }
 }
 

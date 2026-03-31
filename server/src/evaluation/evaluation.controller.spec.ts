@@ -63,9 +63,15 @@ describe('EvaluationController authorization', () => {
       EvaluationController.prototype,
       'findByConversation',
     );
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const targetMethod = descriptor?.value;
+    const targetMethod = descriptor?.value as
+      | ((...args: unknown[]) => unknown)
+      | undefined;
     expect(typeof targetMethod).toBe('function');
+    expect(targetMethod).toBeDefined();
+
+    if (!targetMethod) {
+      throw new Error('findByConversation descriptor is missing');
+    }
 
     const accessMeta = Reflect.getMetadata(
       CONVERSATION_ACCESS_KEY,
