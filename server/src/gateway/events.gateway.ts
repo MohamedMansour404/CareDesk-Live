@@ -488,11 +488,16 @@ export class EventsGateway
         ? WS_EVENTS.AGENT_TYPING
         : WS_EVENTS.PATIENT_TYPING;
 
-    client.to(`conversation:${data.conversationId}`).emit(event, {
+    const payload = {
       userId: client.data.userId,
       role: client.data.role,
       conversationId: data.conversationId,
-    });
+    };
+
+    client.to(`conversation:${data.conversationId}`).emit(event, payload);
+    client
+      .to(`conversation:${data.conversationId}`)
+      .emit('typing:update', payload);
   }
 
   @OnEvent(SYSTEM_EVENTS.MESSAGE_CREATED)
