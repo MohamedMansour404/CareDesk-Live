@@ -1,10 +1,15 @@
-# compiled output
-**/dist
+# Node and build output
+node_modules/
+dist/
+build/
+client/node_modules/
+client/dist/
 **/node_modules
+**/dist
 **/build
 
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 pnpm-debug.log*
@@ -14,6 +19,7 @@ lerna-debug.log*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Tests
 /coverage
@@ -29,22 +35,19 @@ lerna-debug.log*
 *.sublime-workspace
 
 # IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+.vscode/
 
 # dotenv environment variable files
 .env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
+.env.*
+client/.env
 
 # temp directory
 .temp
 .tmp
+
+# TypeScript
+*.tsbuildinfo
 
 # Runtime data
 pids
